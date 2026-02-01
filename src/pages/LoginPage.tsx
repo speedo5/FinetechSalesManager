@@ -125,7 +125,7 @@ export function LoginPage() {
               <p className="text-sm font-medium text-foreground mb-2">Demo Credentials:</p>
               <div className="space-y-1 text-sm text-muted-foreground">
                 <p>
-                  <span className="text-primary font-medium">Admin:</span> admin@finetech.co.ke / admin123
+                  <span className="text-primary font-medium">Admin:</span> admin@finetech.co.ke / qerty123
                 </p>
                 <p>
                   <span className="text-success font-medium">FO:</span> peter@finetech.co.ke / fo123

@@ -28,7 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { DollarSign, CheckCircle, Clock, Users, Download, Search, Filter, User, UserCog, Building2, Wallet, CreditCard, ChevronDown } from 'lucide-react';
+import { DollarSign, CheckCircle, Clock, Users, Download, Search, Filter, User, UserCog, Building2, Wallet, CreditCard, ChevronDown, Briefcase } from 'lucide-react';
 import { exportCommissions } from '@/lib/pdfGenerator';
 import { CommissionRole, CommissionStatus, Commission } from '@/types';
 import { commissionService } from '@/services/commissionService';
@@ -64,9 +64,19 @@ export default function Commissions() {
         setIsLoading(true);
         const response = await commissionService.getAll();
         if (response.success && response.data) {
-          const commissionsList = Array.isArray(response.data) 
-            ? response.data 
-            : [];
+          let commissionsList: Commission[] = [];
+          
+          if (Array.isArray(response.data)) {
+            // Direct array response
+            commissionsList = response.data;
+          } else if ((response.data as any).data && Array.isArray((response.data as any).data)) {
+            // Response with data property
+            commissionsList = (response.data as any).data;
+          } else if ((response.data as any).commissions && Array.isArray((response.data as any).commissions)) {
+            // CommissionListResponse with commissions property
+            commissionsList = (response.data as any).commissions;
+          }
+          
           setCommissions(commissionsList);
         }
       } catch (error) {
@@ -87,24 +97,24 @@ export default function Commissions() {
   );
 
   // Filter commissions based on user role
-  const getVisibleCommissions = () => {
-    if (currentUser?.role === 'admin') {
+  const visibleCommissions = useMemo(() => {
+    if (!currentUser) return commissions;
+    
+    if (currentUser.role === 'admin') {
       return commissions;
     }
-    if (currentUser?.role === 'regional_manager') {
-      const teamLeaderIds = users
-        .filter(u => u.role === 'team_leader' && u.regionalManagerId === currentUser.id)
+    if (currentUser.role === 'regional_manager') {
+      // Get all users in the RM's region AND include RM's own commissions
+      const regionUserIds = users
+        .filter(u => u.region === currentUser.region || u.id === currentUser.id)
         .map(u => u.id);
-      const foIds = users
-        .filter(u => u.role === 'field_officer' && u.regionalManagerId === currentUser.id)
-        .map(u => u.id);
+      
+      // Include RM's own commissions plus all commissions for users in their region
       return commissions.filter(c => 
-        c.userId === currentUser.id || 
-        teamLeaderIds.includes(c.userId) || 
-        foIds.includes(c.userId)
+        regionUserIds.includes(c.userId) || c.region === currentUser.region
       );
     }
-    if (currentUser?.role === 'team_leader') {
+    if (currentUser.role === 'team_leader') {
       const foIds = users
         .filter(u => u.role === 'field_officer' && u.teamLeaderId === currentUser.id)
         .map(u => u.id);
@@ -113,10 +123,8 @@ export default function Commissions() {
         foIds.includes(c.userId)
       );
     }
-    return commissions.filter(c => c.userId === currentUser?.id);
-  };
-
-  const visibleCommissions = getVisibleCommissions();
+    return commissions.filter(c => c.userId === currentUser.id);
+  }, [commissions, users, currentUser]);
 
   // Apply filters
   const filteredCommissions = useMemo(() => {
@@ -402,7 +410,7 @@ export default function Commissions() {
       key={summary.userId}
       className="flex items-center gap-4 p-4 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
     >
-      {currentUser?.role === 'admin' && summary.totalPending > 0 && (
+      {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && summary.totalPending > 0 && (
         <Checkbox
           checked={selectedUsers.has(summary.userId)}
           onCheckedChange={() => toggleUserSelection(summary.userId)}
@@ -438,7 +446,7 @@ export default function Commissions() {
           </p>
         )}
       </div>
-      {currentUser?.role === 'admin' && summary.totalPending > 0 && (
+      {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && summary.totalPending > 0 && (
         <Button 
           size="sm" 
           onClick={() => handlePayUser(summary.userId)}
@@ -481,7 +489,7 @@ export default function Commissions() {
                 <p className="text-lg font-bold text-warning">Ksh {totalPending.toLocaleString()}</p>
                 <p className="text-xs text-muted-foreground">pending</p>
               </div>
-              {currentUser?.role === 'admin' && (
+              {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && (
                 <Button 
                   size="sm" 
                   variant="outline"
@@ -571,6 +579,44 @@ export default function Commissions() {
           </Card>
         </div>
 
+        {/* RM Personal Commissions Section */}
+        {currentUser?.role === 'regional_manager' && (() => {
+          const rmOwnCommissions = filteredCommissions.filter(c => c.userId === currentUser.id);
+          const rmOwnTotal = rmOwnCommissions.reduce((sum, c) => sum + c.amount, 0);
+          const rmOwnPending = rmOwnCommissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0);
+          const rmOwnPaid = rmOwnCommissions.filter(c => c.status === 'paid').reduce((sum, c) => sum + c.amount, 0);
+          
+          if (rmOwnTotal > 0) {
+            return (
+              <Card className="border-2 border-primary shadow-md mb-6 bg-primary/5">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <User className="h-5 w-5 text-primary" />
+                    Your Commissions (RM)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="flex flex-col items-start gap-1 p-3 bg-primary/10 rounded-lg">
+                      <span className="text-xs font-medium text-muted-foreground">Total Earned</span>
+                      <span className="text-xl font-bold">Ksh {rmOwnTotal.toLocaleString()}</span>
+                    </div>
+                    <div className="flex flex-col items-start gap-1 p-3 bg-success/10 rounded-lg">
+                      <span className="text-xs font-medium text-muted-foreground">Paid</span>
+                      <span className="text-xl font-bold text-success">Ksh {rmOwnPaid.toLocaleString()}</span>
+                    </div>
+                    <div className="flex flex-col items-start gap-1 p-3 bg-warning/10 rounded-lg">
+                      <span className="text-xs font-medium text-muted-foreground">Pending</span>
+                      <span className="text-xl font-bold text-warning">Ksh {rmOwnPending.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          }
+          return null;
+        })()}
+
         {/* Filters */}
         <Card className="border shadow-sm mb-6">
           <CardContent className="p-4">
@@ -638,8 +684,119 @@ export default function Commissions() {
 
         {viewMode === 'disbursement' ? (
           <>
+            {/* Commission Breakdown by Role (RM_TL_FO) */}
+            {filteredCommissions.length > 0 && (
+              <Card className="border shadow-sm mb-6 bg-gradient-to-r from-primary/5 to-transparent">
+                <CardHeader>
+                  <CardTitle className="text-base">Commission Summary by Role</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Regional Manager Commission */}
+                    <div className="p-4 rounded-lg bg-warning/10 border border-warning/20">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Building2 className="h-5 w-5 text-warning" />
+                        <span className="font-semibold text-warning">Regional Manager</span>
+                      </div>
+                      <div className="space-y-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Total</p>
+                          <p className="text-xl font-bold">Ksh {filteredCommissions
+                            .filter(c => c.role === 'regional_manager')
+                            .reduce((sum, c) => sum + c.amount, 0)
+                            .toLocaleString()}</p>
+                        </div>
+                        <div className="flex gap-3 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">Pending: </span>
+                            <span className="font-medium text-warning">Ksh {filteredCommissions
+                              .filter(c => c.role === 'regional_manager' && c.status === 'pending')
+                              .reduce((sum, c) => sum + c.amount, 0)
+                              .toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Paid: </span>
+                            <span className="font-medium text-success">Ksh {filteredCommissions
+                              .filter(c => c.role === 'regional_manager' && c.status === 'paid')
+                              .reduce((sum, c) => sum + c.amount, 0)
+                              .toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Team Leader Commission */}
+                    <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Briefcase className="h-5 w-5 text-primary" />
+                        <span className="font-semibold text-primary">Team Leader</span>
+                      </div>
+                      <div className="space-y-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Total</p>
+                          <p className="text-xl font-bold">Ksh {filteredCommissions
+                            .filter(c => c.role === 'team_leader')
+                            .reduce((sum, c) => sum + c.amount, 0)
+                            .toLocaleString()}</p>
+                        </div>
+                        <div className="flex gap-3 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">Pending: </span>
+                            <span className="font-medium text-warning">Ksh {filteredCommissions
+                              .filter(c => c.role === 'team_leader' && c.status === 'pending')
+                              .reduce((sum, c) => sum + c.amount, 0)
+                              .toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Paid: </span>
+                            <span className="font-medium text-success">Ksh {filteredCommissions
+                              .filter(c => c.role === 'team_leader' && c.status === 'paid')
+                              .reduce((sum, c) => sum + c.amount, 0)
+                              .toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Field Officer Commission */}
+                    <div className="p-4 rounded-lg bg-success/10 border border-success/20">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Users className="h-5 w-5 text-success" />
+                        <span className="font-semibold text-success">Field Officer</span>
+                      </div>
+                      <div className="space-y-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Total</p>
+                          <p className="text-xl font-bold">Ksh {filteredCommissions
+                            .filter(c => c.role === 'field_officer')
+                            .reduce((sum, c) => sum + c.amount, 0)
+                            .toLocaleString()}</p>
+                        </div>
+                        <div className="flex gap-3 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">Pending: </span>
+                            <span className="font-medium text-warning">Ksh {filteredCommissions
+                              .filter(c => c.role === 'field_officer' && c.status === 'pending')
+                              .reduce((sum, c) => sum + c.amount, 0)
+                              .toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Paid: </span>
+                            <span className="font-medium text-success">Ksh {filteredCommissions
+                              .filter(c => c.role === 'field_officer' && c.status === 'paid')
+                              .reduce((sum, c) => sum + c.amount, 0)
+                              .toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Bulk Actions */}
-            {currentUser?.role === 'admin' && pendingUsersCount > 0 && (
+            {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && pendingUsersCount > 0 && (
               <Card className="border shadow-sm mb-4 bg-muted/30">
                 <CardContent className="p-4">
                   <div className="flex flex-wrap items-center justify-between gap-4">

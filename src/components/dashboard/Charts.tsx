@@ -52,11 +52,11 @@ const COLORS = ['hsl(175 70% 45%)', 'hsl(210 80% 45%)', 'hsl(142 70% 45%)', 'hsl
 export function SalesPieChart({ data }: SalesPieChartProps) {
   return (
     <Card className="border shadow-sm">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-lg font-heading">Companies Performance</CardTitle>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-lg font-heading">Phones Performance</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="h-[300px]">
+        <div className="h-[200px]">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -64,8 +64,8 @@ export function SalesPieChart({ data }: SalesPieChartProps) {
                 cx="50%"
                 cy="50%"
                 innerRadius={60}
-                outerRadius={100}
-                paddingAngle={4}
+                outerRadius={90}
+                paddingAngle={2}
                 dataKey="value"
               >
                 {data.map((_, index) => (
@@ -82,7 +82,7 @@ export function SalesPieChart({ data }: SalesPieChartProps) {
               />
             </PieChart>
           </ResponsiveContainer>
-          <div className="flex flex-wrap justify-center gap-4 mt-4">
+          <div className="flex flex-wrap justify-center gap-4 mt-0">
             {data.map((item, index) => (
               <div key={item.name} className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />

@@ -47,30 +47,56 @@ const generateRegionReportData = (
   endDate: Date
 ): RegionReportData => {
   // Filter sales by region and date range
-  const regionUsers = users.filter(u => u.region === region);
+  // Normalize region matching (case-insensitive) and include sales that have a direct `region` field
+  const regionNormalized = (region || '').toString().toLowerCase().trim();
+  const regionUsers = users.filter(u => (u.region || '').toString().toLowerCase().trim() === regionNormalized);
   const regionUserIds = regionUsers.map(u => u.id);
+  console.log(`🔍 generateRegionReportData for region "${region}":`, { 
+    regionUsersCount: regionUsers.length, 
+    regionUserIds,
+    totalSalesCount: sales.length,
+    dateRange: `${format(startDate, 'yyyy-MM-dd')} to ${format(endDate, 'yyyy-MM-dd')}`
+  });
   
   const regionSales = sales.filter(sale => {
     const saleDate = new Date(sale.createdAt);
     const isInDateRange = saleDate >= startDate && saleDate <= endDate;
-    const isRegionSale = 
-      sale.regionalManagerId && regionUserIds.includes(sale.regionalManagerId) ||
-      sale.foId && regionUserIds.includes(sale.foId) ||
-      regionUsers.some(u => u.id === sale.createdBy);
+
+    const saleRegion = (sale.region || sale.regionName || '').toString().toLowerCase().trim();
+
+    const isRegionSale =
+      // Direct region field on sale (case-insensitive)
+      (saleRegion && saleRegion === regionNormalized) ||
+      // Regional manager / FO based matching
+      (sale.regionalManagerId && regionUserIds.includes(sale.regionalManagerId)) ||
+      (sale.foId && regionUserIds.includes(sale.foId)) ||
+      // Creator user belongs to region
+      regionUserIds.includes(sale.createdBy) ||
+      // Some APIs may include creator region on the sale
+      ((sale.createdByRegion || '').toString().toLowerCase().trim() === regionNormalized);
+
     return isInDateRange && isRegionSale;
   });
+  console.log(`✅ Region "${region}" filtered sales:`, regionSales.length);
 
   const reportData: ReportData[] = regionSales.map(sale => {
     // Get commission for this sale (FO commission)
     const saleCommissions = commissions.filter(c => c.saleId === sale.id);
     const totalCommission = saleCommissions.reduce((sum, c) => sum + c.amount, 0);
     
-    // Get FO name
-    const foUser = users.find(u => u.id === sale.foId || u.id === sale.createdBy);
+    // Get seller name — try soldBy first, then foId, then createdBy (Admin/RM/TL/FO who made the sale)
+    let sellerName = sale.sellerName || 'N/A';
+    
+    // If sellerName is still not available, find the user from the database
+    if (!sellerName || sellerName === 'N/A') {
+      const sellerId = sale.soldBy || sale.foId || sale.createdBy;
+      const sellerUser = users.find(u => u.id === sellerId);
+      sellerName = sellerUser?.name || sale.foName || sale.sellerName || 'Unknown';
+    }
     
     return {
       date: formatDate(new Date(sale.createdAt)),
-      foName: sale.foName || foUser?.name || sale.sellerName || 'N/A',
+      foName: sellerName,
       phoneModel: sale.productName,
       imei: sale.imei || 'N/A',
       qty: sale.quantity,
@@ -168,6 +194,115 @@ const createRegionSheet = (
   return ws;
 };
 
+// Create worksheet for products/inventory
+const createInventorySheet = (
+  products: any[],
+  imeis: any[]
+): XLSX.WorkSheet => {
+  const ws = XLSX.utils.aoa_to_sheet([]);
+  
+  // Row counter
+  let rowIndex = 0;
+
+  // Company header
+  XLSX.utils.sheet_add_aoa(ws, [[COMPANY_INFO.name]], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  XLSX.utils.sheet_add_aoa(ws, [['INVENTORY & STOCK REPORT']], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  XLSX.utils.sheet_add_aoa(ws, [[`Generated: ${format(new Date(), 'do MMMM yyyy HH:mm')}`]], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  // Empty row
+  rowIndex++;
+  
+  // Phones section
+  XLSX.utils.sheet_add_aoa(ws, [['PHONES INVENTORY']], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  const phoneHeaders = ['Product Name', 'Category', 'Stock Quantity', 'Unit Price', 'Available IMEIs', 'Total Value'];
+  XLSX.utils.sheet_add_aoa(ws, [phoneHeaders], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  // Filter products by category and add data
+  const phones = products.filter((p: any) => p.category === 'phone' || !p.category);
+  phones.forEach((phone: any) => {
+    const availableImeis = imeis.filter((i: any) => i.productId === phone.id && i.status === 'IN_STOCK').length;
+    const totalValue = (phone.stockQuantity || 0) * (phone.unitPrice || 0);
+    
+    XLSX.utils.sheet_add_aoa(ws, [[
+      phone.name,
+      phone.category || 'Phone',
+      phone.stockQuantity || 0,
+      phone.unitPrice || 0,
+      availableImeis,
+      totalValue,
+    ]], { origin: { r: rowIndex, c: 0 } });
+    rowIndex++;
+  });
+  
+  // Empty row
+  rowIndex++;
+  
+  // Accessories section
+  XLSX.utils.sheet_add_aoa(ws, [['ACCESSORIES INVENTORY']], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  const accessoryHeaders = ['Product Name', 'Category', 'Stock Quantity', 'Unit Price', 'Total Value'];
+  XLSX.utils.sheet_add_aoa(ws, [accessoryHeaders], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  const accessories = products.filter((p: any) => p.category === 'accessory');
+  accessories.forEach((accessory: any) => {
+    const totalValue = (accessory.stockQuantity || 0) * (accessory.unitPrice || 0);
+    
+    XLSX.utils.sheet_add_aoa(ws, [[
+      accessory.name,
+      accessory.category || 'Accessory',
+      accessory.stockQuantity || 0,
+      accessory.unitPrice || 0,
+      totalValue,
+    ]], { origin: { r: rowIndex, c: 0 } });
+    rowIndex++;
+  });
+  
+  // Empty row
+  rowIndex++;
+  
+  // Summary section
+  XLSX.utils.sheet_add_aoa(ws, [['INVENTORY SUMMARY']], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  
+  const totalPhoneStock = phones.reduce((sum: number, p: any) => sum + (p.stockQuantity || 0), 0);
+  const totalAccessoryStock = accessories.reduce((sum: number, a: any) => sum + (a.stockQuantity || 0), 0);
+  const totalImeiInStock = imeis.filter((i: any) => i.status === 'IN_STOCK').length;
+  const totalPhoneValue = phones.reduce((sum: number, p: any) => sum + ((p.stockQuantity || 0) * (p.unitPrice || 0)), 0);
+  const totalAccessoryValue = accessories.reduce((sum: number, a: any) => sum + ((a.stockQuantity || 0) * (a.unitPrice || 0)), 0);
+  
+  XLSX.utils.sheet_add_aoa(ws, [['Total Phone Units', totalPhoneStock]], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  XLSX.utils.sheet_add_aoa(ws, [['Total Phone Value', `KES ${totalPhoneValue.toLocaleString()}`]], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  XLSX.utils.sheet_add_aoa(ws, [['Total Accessory Units', totalAccessoryStock]], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  XLSX.utils.sheet_add_aoa(ws, [['Total Accessory Value', `KES ${totalAccessoryValue.toLocaleString()}`]], { origin: { r: rowIndex, c: 0 } });
+  rowIndex++;
+  XLSX.utils.sheet_add_aoa(ws, [['Total IMEI in Stock', totalImeiInStock]], { origin: { r: rowIndex, c: 0 } });
+  
+  // Set column widths
+  ws['!cols'] = [
+    { wch: 25 },  // Product Name
+    { wch: 15 },  // Category
+    { wch: 15 },  // Stock Quantity
+    { wch: 12 },  // Unit Price
+    { wch: 15 },  // Available IMEIs / Total Value
+    { wch: 15 },  // Total Value
+  ];
+  
+  return ws;
+};
+
 // Export sales report to Excel with multiple sheets (one per region)
 export const exportSalesReportToExcel = (
   sales: Sale[],
@@ -175,14 +310,29 @@ export const exportSalesReportToExcel = (
   users: User[],
   startDate: Date,
   endDate: Date,
-  selectedRegions: string[] // Empty array means all regions
+  selectedRegions: string[], // Empty array means all regions
+  products: any[] = [],
+  imeis: any[] = []
 ): void => {
+  console.log('📊 exportSalesReportToExcel called with:', { 
+    salesCount: sales.length, 
+    commissionsCount: commissions.length,
+    usersCount: users.length,
+    productsCount: products.length,
+    imeisCount: imeis.length,
+    selectedRegions,
+    startDate: format(startDate, 'yyyy-MM-dd'),
+    endDate: format(endDate, 'yyyy-MM-dd')
+  });
+  
   const wb = XLSX.utils.book_new();
   
   const regionsToExport = selectedRegions.length > 0 ? selectedRegions : REGIONS;
+  console.log('🌍 Regions to export:', regionsToExport);
   
   regionsToExport.forEach(region => {
     const regionData = generateRegionReportData(sales, commissions, users, region, startDate, endDate);
+    console.log(`📋 Region "${region}" data rows:`, regionData.data.length);
     
     // Only add sheet if there's data
     if (regionData.data.length > 0) {
@@ -193,8 +343,16 @@ export const exportSalesReportToExcel = (
     }
   });
   
+  // Add inventory sheet if products data is provided
+  if (products.length > 0 || imeis.length > 0) {
+    console.log('📦 Adding inventory sheet to workbook');
+    const inventoryWs = createInventorySheet(products, imeis);
+    XLSX.utils.book_append_sheet(wb, inventoryWs, 'Inventory');
+  }
+  
   // If no sheets were added, add an empty summary sheet
   if (wb.SheetNames.length === 0) {
+    console.warn('⚠️ No sales data found - creating empty sheet');
     const ws = XLSX.utils.aoa_to_sheet([
       [COMPANY_INFO.name],
       ['WEEKLY SALES & STOCK REPORT'],
@@ -209,6 +367,7 @@ export const exportSalesReportToExcel = (
   const dateRangeStr = `${format(startDate, 'd')}-${format(endDate, 'd_MMM_yyyy')}`;
   const regionStr = selectedRegions.length === 1 ? selectedRegions[0] : 'AllRegions';
   const filename = `Sales_Report_${regionStr}_${dateRangeStr}.xlsx`;
+  console.log('✅ Creating Excel file:', filename);
   
 // Download the file using proper binary output
   const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -230,9 +389,11 @@ export const exportSingleRegionReport = (
   users: User[],
   region: string,
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  products: any[] = [],
+  imeis: any[] = []
 ): void => {
-  exportSalesReportToExcel(sales, commissions, users, startDate, endDate, [region]);
+  exportSalesReportToExcel(sales, commissions, users, startDate, endDate, [region], products, imeis);
 };
 
 // Print report (opens print dialog)
@@ -244,7 +405,15 @@ export const printReport = (
   endDate: Date,
   selectedRegions: string[]
 ): void => {
+  console.log('🖨️ printReport called with:', { 
+    salesCount: sales.length, 
+    commissionsCount: commissions.length,
+    usersCount: users.length,
+    selectedRegions
+  });
+  
   const regionsToProcess = selectedRegions.length > 0 ? selectedRegions : REGIONS;
+  console.log('🌍 Regions to print:', regionsToProcess);
   
   // Create printable HTML
   let htmlContent = `
@@ -273,6 +442,7 @@ export const printReport = (
   
   regionsToProcess.forEach((region, index) => {
     const regionData = generateRegionReportData(sales, commissions, users, region, startDate, endDate);
+    console.log(`📋 Region "${region}" print data rows:`, regionData.data.length);
     
     if (regionData.data.length > 0) {
       htmlContent += `

@@ -55,9 +55,20 @@ export default function Receipts() {
         setIsLoading(true);
         const response = await salesService.getAll();
         if (response.success && response.data) {
-          let salesList = Array.isArray(response.data) 
-            ? response.data 
-            : [];
+          let salesList = Array.isArray(response.data) ? response.data : [];
+          
+          // enrich sales with seller info (name/role/region) from users context when missing
+          salesList = salesList.map((s: any) => {
+            const user = users.find(u => u.id === s.createdBy);
+            return {
+              ...s,
+              sellerName: s.sellerName || s.createdByName || user?.name || s.createdBy || 'Unknown',
+              sellerRole: s.sellerRole || user?.role || s.role || '',
+              sellerRegion: s.sellerRegion || s.region || user?.region || '',
+              // precompute sellerLabel for exports/PDFs
+              sellerLabel: s.sellerLabel || undefined,
+            };
+          });
           
           // Filter sales by region if user is Regional Manager
           if (managerRegion) {
@@ -75,7 +86,7 @@ export default function Receipts() {
     };
 
     fetchSales();
-  }, [managerRegion]);
+  }, [managerRegion, users]);
 
   const getSourceBadgeClass = (source: PhoneSource | undefined) => {
     switch (source) {
@@ -104,6 +115,28 @@ export default function Receipts() {
     }
   };
 
+  // Helper: format seller display as "Name - [ROLE] Region" (e.g. "James Warue - [RM] Rift Valley")
+  const getSellerLabel = (sale: any) => {
+    const name = sale.sellerName || sale.seller?.name || sale.createdBy || 'Unknown';
+    const roleRaw = sale.sellerRole || sale.createdByRole || sale.role || sale.seller?.role || '';
+    const region = sale.region || sale.seller?.region || sale.sellerRegion || sale.createdByRegion || '';
+
+    const r = String(roleRaw || '').toLowerCase();
+    let roleAbbrev = '';
+    if (r.includes('regional')) roleAbbrev = 'RM';
+    else if (r.includes('field')) roleAbbrev = 'FO';
+    else if (r.includes('team') || r.includes('leader') || r.includes('tl')) roleAbbrev = 'TL';
+    else if (r.includes('admin')) roleAbbrev = 'Admin';
+    else if (roleRaw) roleAbbrev = roleRaw;
+
+    const rolePart = roleAbbrev ? `[${roleAbbrev}]` : '';
+
+    if (rolePart && region) return `${name} - ${rolePart} ${region}`;
+    if (rolePart) return `${name} - ${rolePart}`;
+    if (region) return `${name} - ${region}`;
+    return name;
+  };
+
   const filteredSales = sales.filter(sale => {
     const matchesSearch = 
       sale.etrReceiptNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -123,6 +156,12 @@ export default function Receipts() {
   });
 
   const handleExport = () => {
+    // Enrich sales with computed seller labels for export
+    const salesWithLabels = filteredSales.map(sale => ({
+      ...sale,
+      sellerLabel: getSellerLabel(sale),
+    }));
+
     const columns = [
       { key: 'etrReceiptNo' as const, header: 'Receipt No' },
       { key: 'createdAt' as const, header: 'Date' },
@@ -131,16 +170,21 @@ export default function Receipts() {
       { key: 'saleAmount' as const, header: 'Amount' },
       { key: 'paymentMethod' as const, header: 'Payment' },
       { key: 'paymentReference' as const, header: 'Reference' },
-      { key: 'sellerName' as const, header: 'Seller' },
+      { key: 'sellerLabel' as const, header: 'Seller' },
       { key: 'foCode' as const, header: 'FO Code' },
     ];
-    exportToCSV(filteredSales, 'receipts', columns);
+    exportToCSV(salesWithLabels, 'receipts', columns);
   };
 
   const handleDownloadReceipt = async (sale: typeof sales[0]) => {
     try {
       setIsDownloading(true);
-      generateSaleReceipt(sale);
+      // attach seller label so PDF generator can print role/region
+      const saleWithSeller = {
+        ...sale,
+        sellerLabel: getSellerLabel(sale),
+      };
+      generateSaleReceipt(saleWithSeller);
     } catch (error) {
       console.error('Error downloading receipt:', error);
       toast.error('Failed to download receipt');
@@ -299,7 +343,7 @@ export default function Receipts() {
                     </p>
                   )}
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">{sale.sellerName || 'Unknown'}</span>
+                    <span className="text-muted-foreground">{getSellerLabel(sale)}</span>
                     <span className="font-bold text-success">Ksh {sale.saleAmount.toLocaleString()}</span>
                   </div>
                   {canPrintReceipt && (
@@ -385,7 +429,7 @@ export default function Receipts() {
                       <td className="font-mono text-xs">{sale.imei || '-'}</td>
                       <td>
                         <div>
-                          <p className="font-medium text-sm">{sale.sellerName || 'Unknown'}</p>
+                          <p className="font-medium text-sm">{getSellerLabel(sale)}</p>
                           {sale.foCode && <p className="text-xs text-muted-foreground">{sale.foCode}</p>}
                         </div>
                       </td>
@@ -492,9 +536,11 @@ export default function Receipts() {
               </div>
 
               {/* Seller Info */}
-              {previewSale.createdBy && (
+              {previewSale && (
                 <div className="text-xs">
-                  <p><span className="font-semibold">Seller:</span> {previewSale.createdBy}</p>
+                  <p>
+                    <span className="font-semibold">Seller:</span> {getSellerLabel(previewSale)}
+                  </p>
                 </div>
               )}
 

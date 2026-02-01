@@ -103,21 +103,36 @@ export default function RegionalDashboard() {
     [teamLeaders, fieldOfficers]
   );
 
-  // Get sales from this region's team
+  // Get sales from this region's team (include sales created by the RM themself)
   const regionSales = useMemo(() => 
     loadedSales.filter(sale => {
-      const matchesTeam = teamMemberIds.includes(sale.createdBy) || 
-                          fieldOfficers.some(fo => fo.foCode === sale.foCode);
+      // Include sales by RM themselves
+      const isCreatedByRM = sale.createdBy === currentUser?.id;
+      
+      // Include sales by team members (TL and FO)
+      const matchesTeam = teamMemberIds.some(memberId => 
+        memberId === sale.createdBy || memberId === sale.foId
+      ) || fieldOfficers.some(fo => fo.foCode === sale.foCode);
+      
+      // Alternative: include if sale is in the same region
+      const matchesRegion = sale.region === myRegion;
+      
       const matchesSource = sourceFilter === 'all' || sale.source === sourceFilter;
-      return matchesTeam && matchesSource;
-    }), [loadedSales, teamMemberIds, fieldOfficers, sourceFilter]
+      
+      // include if it's from the team OR created by the regional manager OR in the same region
+      return (matchesTeam || isCreatedByRM || matchesRegion) && matchesSource;
+    }), [loadedSales, teamMemberIds, fieldOfficers, sourceFilter, currentUser?.id, myRegion]
   );
 
-  // Get commissions for this region's FOs
+  // Get commissions for this region (RM's own commissions + team members' commissions)
   const regionCommissions = useMemo(() =>
     loadedCommissions.filter(comm =>
-      fieldOfficers.some(fo => fo.id === comm.foId)
-    ), [loadedCommissions, fieldOfficers]
+      // Include RM's own commissions (userId matches RM)
+      comm.userId === currentUser?.id ||
+      // Include team members' commissions (foId or userId matches FOs/TLs in region)
+      fieldOfficers.some(fo => fo.id === comm.userId || fo.id === comm.foId) ||
+      teamLeaders.some(tl => tl.id === comm.userId || tl.id === comm.foId)
+    ), [loadedCommissions, fieldOfficers, teamLeaders, currentUser?.id]
   );
 
   // Stats
@@ -363,6 +378,50 @@ export default function RegionalDashboard() {
                         Ksh {totalCommissions.toLocaleString()}
                       </span>
                     </div>
+                    
+                    {/* Breakdown by Role */}
+                    <div className="pt-4 border-t space-y-3">
+                      <p className="text-sm font-medium text-muted-foreground">Breakdown by Role</p>
+                      {(() => {
+                        const rmCommissions = regionCommissions.filter(c => c.role === 'regional_manager');
+                        const tlCommissions = regionCommissions.filter(c => c.role === 'team_leader');
+                        const foCommissions = regionCommissions.filter(c => c.role === 'field_officer');
+                        
+                        const rmTotal = rmCommissions.reduce((sum, c) => sum + c.amount, 0);
+                        const tlTotal = tlCommissions.reduce((sum, c) => sum + c.amount, 0);
+                        const foTotal = foCommissions.reduce((sum, c) => sum + c.amount, 0);
+                        
+                        const rmPending = rmCommissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0);
+                        const tlPending = tlCommissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0);
+                        const foPending = foCommissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0);
+                        
+                        return (
+                          <>
+                            <div className="flex items-center justify-between p-2 bg-muted/50 rounded text-sm">
+                              <span>RM</span>
+                              <div className="text-right">
+                                <p className="font-bold">Ksh {rmTotal.toLocaleString()}</p>
+                                <p className="text-xs text-warning">{rmPending > 0 ? `Ksh ${rmPending.toLocaleString()} pending` : 'All Paid'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-muted/50 rounded text-sm">
+                              <span>TL</span>
+                              <div className="text-right">
+                                <p className="font-bold">Ksh {tlTotal.toLocaleString()}</p>
+                                <p className="text-xs text-warning">{tlPending > 0 ? `Ksh ${tlPending.toLocaleString()} pending` : 'All Paid'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-muted/50 rounded text-sm">
+                              <span>FO</span>
+                              <div className="text-right">
+                                <p className="font-bold">Ksh {foTotal.toLocaleString()}</p>
+                                <p className="text-xs text-warning">{foPending > 0 ? `Ksh ${foPending.toLocaleString()} pending` : 'All Paid'}</p>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -378,40 +437,91 @@ export default function RegionalDashboard() {
                   Team Leaders in {myRegion || 'Your Region'}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-0">
+              <CardContent className="p-6">
                 {teamLeaders.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No team leaders in this region
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Users className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p>No team leaders in this region</p>
                   </div>
                 ) : (
-                  <div className="divide-y">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {teamLeaders.map(tl => {
                       const tlFOs = fieldOfficers.filter(fo => fo.teamLeaderId === tl.id);
-                      const tlSales = regionSales.filter(s => 
-                        tlFOs.some(fo => fo.foCode === s.foCode || fo.id === s.createdBy)
+                      // Sales created by the team leader themself
+                      const tlSelfSales = regionSales.filter(s => s.createdBy === tl.id || s.createdBy === tl._id);
+                      // Sales created by FOs under this team leader
+                      const tlFOSales = regionSales.filter(s =>
+                        tlFOs.some(fo => fo.foCode === s.foCode || fo.id === s.createdBy || fo._id === s.createdBy)
                       );
-                      const tlRevenue = tlSales.reduce((sum, s) => sum + s.saleAmount, 0);
+                      // Merge and dedupe sales
+                      const tlSalesMap = new Map<string, any>();
+                      [...tlSelfSales, ...tlFOSales].forEach(s => { if (s?.id) tlSalesMap.set(s.id, s); });
+                      const tlSales = Array.from(tlSalesMap.values());
+                      const tlRevenue = tlSales.reduce((sum, s) => sum + (s.saleAmount || 0), 0);
+                      
+                      // Team leader commissions (filter by userId and role, not teamLeaderId)
+                      const tlCommissionEntries = loadedCommissions.filter(c => (c.userId === tl.id || c.foId === tl.id) && c.role === 'team_leader');
+                      const tlCommissionsTotal = tlCommissionEntries.reduce((sum, c) => sum + (c.amount || 0), 0);
+                      const tlCommissionsPaid = tlCommissionEntries.filter(c => c.status === 'paid').reduce((sum, c) => sum + (c.amount || 0), 0);
+                      const tlCommissionsPending = tlCommissionEntries.filter(c => c.status === 'pending').reduce((sum, c) => sum + (c.amount || 0), 0);
+ 
+                       return (
+                         <Card key={tl.id} className="border-l-4 border-l-warning bg-gradient-to-br from-warning/5 to-transparent hover:shadow-md transition-all">
+                           <CardContent className="p-4">
+                             {/* Header with name and contact */}
+                             <div className="flex items-center gap-3 mb-4 pb-4 border-b">
+                               <div className="h-12 w-12 rounded-full bg-warning flex items-center justify-center flex-shrink-0">
+                                 <Briefcase className="h-6 w-6 text-warning-foreground" />
+                               </div>
+                               <div className="flex-1 min-w-0">
+                                 <p className="font-semibold text-foreground">{tl.name}</p>
+                                 <p className="text-sm text-muted-foreground truncate">{tl.email}</p>
+                               </div>
+                             </div>
 
-                      return (
-                        <div key={tl.id} className="p-4 hover:bg-muted/50 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div className="h-10 w-10 rounded-full bg-warning flex items-center justify-center">
-                                <Briefcase className="h-5 w-5 text-warning-foreground" />
-                              </div>
-                              <div>
-                                <p className="font-medium">{tl.name}</p>
-                                <p className="text-sm text-muted-foreground">{tl.email}</p>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-bold text-success">Ksh {tlRevenue.toLocaleString()}</p>
-                              <p className="text-xs text-muted-foreground">{tlFOs.length} FOs | {tlSales.length} sales</p>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                             {/* Primary metrics */}
+                             <div className="grid grid-cols-2 gap-3 mb-4">
+                               <div className="bg-success/10 rounded-lg p-3 border border-success/20">
+                                 <p className="text-xs font-medium text-muted-foreground mb-1">Revenue</p>
+                                 <p className="font-bold text-success text-lg">Ksh {tlRevenue.toLocaleString()}</p>
+                               </div>
+                               <div className="bg-blue-500/10 rounded-lg p-3 border border-blue-500/20">
+                                 <p className="text-xs font-medium text-muted-foreground mb-1">Sales</p>
+                                 <p className="font-bold text-blue-600 text-lg">{tlSales.length}</p>
+                                 <p className="text-xs text-muted-foreground">{tlFOs.length} FOs</p>
+                               </div>
+                             </div>
+
+                             {/* Commission metrics */}
+                             <div className="space-y-2 pt-3 border-t">
+                               <div className="flex items-center justify-between">
+                                 <p className="text-sm font-medium text-foreground">Commission Total</p>
+                                 <p className="font-semibold text-primary">Ksh {tlCommissionsTotal.toLocaleString()}</p>
+                               </div>
+                               <div className="flex items-center justify-between text-sm">
+                                 <div className="flex gap-4">
+                                   <div>
+                                     <span className="text-muted-foreground">Paid: </span>
+                                     <span className="font-medium text-green-600">Ksh {tlCommissionsPaid.toLocaleString()}</span>
+                                   </div>
+                                   <div>
+                                     <span className="text-muted-foreground">Pending: </span>
+                                     <span className="font-medium text-orange-600">Ksh {tlCommissionsPending.toLocaleString()}</span>
+                                   </div>
+                                 </div>
+                               </div>
+                             </div>
+
+                             {/* Self sales badge */}
+                             <div className="mt-3 pt-3 border-t">
+                               <Badge variant="outline" className="bg-purple-500/10 text-purple-700 border-purple-500/30">
+                                 TL Self Sales: {tlSelfSales.length}
+                               </Badge>
+                             </div>
+                           </CardContent>
+                         </Card>
+                       );
+                     })}
                   </div>
                 )}
               </CardContent>
@@ -436,7 +546,7 @@ export default function RegionalDashboard() {
                 ) : (
                   <div className="space-y-3">
                     {fieldOfficers.map(fo => {
-                      const foSales = regionSales.filter(s => s.foCode === fo.foCode || s.createdBy === fo.id);
+                      const foSales = regionSales.filter(s => s.foCode === fo.foCode || s.createdBy === fo.id || s.createdBy === fo._id);
                       const foRevenue = foSales.reduce((sum, s) => sum + s.saleAmount, 0);
                       const teamLeader = loadedUsers.find(u => u.id === fo.teamLeaderId);
 

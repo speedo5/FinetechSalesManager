@@ -48,9 +48,11 @@ export interface CommissionListParams {
 }
 
 export interface CommissionListResponse {
-  commissions: Commission[];
-  total: number;
-  summary: {
+  commissions?: Commission[];
+  data?: Commission[];
+  total?: number;
+  count?: number;
+  summary?: {
     totalPending: number;
     totalApproved: number;
     totalPaid: number;

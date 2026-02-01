@@ -72,7 +72,7 @@ export function BulkAllocationDialog({
     }
   };
 
-  const handleAllocate = () => {
+  const handleAllocate = async () => {
     if (selectedImeis.size === 0) {
       toast({
         title: 'No items selected',
@@ -92,17 +92,21 @@ export function BulkAllocationDialog({
     }
 
     const selectedStock = stock.filter(i => selectedImeis.has(i.id));
-    onAllocate(selectedStock, selectedRecipient);
+    try {
+      await onAllocate(selectedStock, selectedRecipient);
+      // Parent handles success toast and closing the dialog
+    } catch (err: any) {
+      toast({
+        title: 'Allocation failed',
+        description: err?.message || 'Failed to allocate stock',
+        variant: 'destructive',
+      });
+      return;
+    }
 
-    const recipient = recipients.find(r => r.id === selectedRecipient);
-    toast({
-      title: 'Stock allocated',
-      description: `${selectedStock.length} phones allocated to ${recipient?.name}`,
-    });
-
+    // Clear selection; parent will close the dialog when allocation succeeds
     setSelectedImeis(new Set());
     setSelectedRecipient('');
-    onOpenChange(false);
   };
 
   const getRecipientLabel = () => {

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { ActivityType } from '@/types';
 import { activityLogService } from '@/services/activityLogService';
+import { exportToCSV } from '@/lib/pdfGenerator';
 import { toast as sonnerToast } from 'sonner';
 
 export default function ActivityLog() {
@@ -166,6 +167,31 @@ export default function ActivityLog() {
     );
   };
 
+  const handleExport = () => {
+    // Transform activity logs for export
+    const exportData = activityLogs.map(log => ({
+      action: log.action,
+      entityType: log.entityType?.replace('_', ' ') || '',
+      userName: log.userId?.name || 'Unknown User',
+      userEmail: log.userId?.email || 'N/A',
+      description: log.details?.description || log.details?.path || (typeof log.details === 'string' ? log.details : 'Activity recorded'),
+      timestamp: format(new Date(log.createdAt), 'MMM dd, yyyy HH:mm'),
+      createdAt: new Date(log.createdAt).toISOString(),
+    }));
+
+    const columns = [
+      { key: 'timestamp' as const, header: 'Date & Time' },
+      { key: 'action' as const, header: 'Action' },
+      { key: 'entityType' as const, header: 'Type' },
+      { key: 'userName' as const, header: 'User' },
+      { key: 'userEmail' as const, header: 'Email' },
+      { key: 'description' as const, header: 'Details' },
+    ];
+
+    exportToCSV(exportData, 'activity-log', columns);
+    sonnerToast.success('Activity log exported successfully');
+  };
+
   return (
     <MainLayout>
       <div className="animate-fade-in">
@@ -175,7 +201,7 @@ export default function ActivityLog() {
             <h1 className="text-2xl font-heading font-bold text-foreground">Activity Log</h1>
             <p className="text-muted-foreground">Track all system activities and changes</p>
           </div>
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" />
             Export
           </Button>

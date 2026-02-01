@@ -72,8 +72,10 @@ const TeamLeaderDashboard = () => {
           ? commsResponse
           : (commsResponse as any)?.data?.commissions || (commsResponse as any)?.data || [];
         
-        // Filter commissions by region FOs
-        const filteredComms = allComms.filter((c: any) => foIds.includes(c.foId));
+        // Filter commissions by region FOs (check both userId and foId for backward compatibility)
+        const filteredComms = allComms.filter((c: any) => 
+          foIds.includes(c.userId) || foIds.includes(c.foId)
+        );
         setTeamCommissions(filteredComms);
 
         // Fetch allocated stock for the Team Leader
@@ -133,7 +135,7 @@ const TeamLeaderDashboard = () => {
   // FO Performance data
   const foPerformance = myFOs.map((fo: any) => {
     const foSales = teamSales.filter(s => s.createdBy === fo.id || s.createdBy === fo._id);
-    const foComms = teamCommissions.filter(c => c.foId === fo.id || c.foId === fo._id);
+    const foComms = teamCommissions.filter(c => c.userId === fo.id || c.userId === fo._id || c.foId === fo.id || c.foId === fo._id);
     const foId = fo.id || fo._id || fo.name; // Ensure unique identifier
     return {
       ...fo,

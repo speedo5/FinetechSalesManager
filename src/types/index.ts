@@ -214,6 +214,7 @@ export interface Commission {
   reversedAt?: Date;
   reversedReason?: string;
   createdAt: Date;
+  region?: string; // Region of the user receiving the commission
   // Legacy fields for backward compatibility
   foId?: string;
   foName?: string;

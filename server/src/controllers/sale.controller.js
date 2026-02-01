@@ -362,10 +362,23 @@ async function createCommissions(sale, imei, seller) {
   }
 
   // Regional Manager Commission
-  if (seller.regionalManagerId && commissionConfig.regionalManagerCommission > 0) {
+  // Try explicit regionalManagerId first, then fallback to region-based lookup
+  let rmId = seller.regionalManagerId;
+  
+  if (!rmId && seller.region && commissionConfig.regionalManagerCommission > 0) {
+    // Lookup RM by region if not explicitly set
+    const regionalManager = await User.findOne({
+      region: seller.region,
+      role: USER_ROLES.REGIONAL_MANAGER
+    }).select('_id');
+    
+    rmId = regionalManager?._id;
+  }
+  
+  if (rmId && commissionConfig.regionalManagerCommission > 0) {
     commissions.push({
       saleId: sale._id,
-      userId: seller.regionalManagerId,
+      userId: rmId,
       role: USER_ROLES.REGIONAL_MANAGER,
       amount: commissionConfig.regionalManagerCommission
     });

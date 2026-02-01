@@ -38,7 +38,7 @@ const adminNavItems: NavItem[] = [
   { label: 'Allocation Audit', icon: ClipboardList, href: '/allocation-audit', roles: ['admin'] },
   { label: 'Sales (POS)', icon: ShoppingCart, href: '/pos' },
   { label: 'Regions', icon: Globe, href: '/regions', roles: ['admin'] },
-  { label: 'Field Officers', icon: Users, href: '/users', roles: ['admin'] },
+  { label: 'User Management', icon: Users, href: '/users', roles: ['admin'] },
   { label: 'Commissions', icon: DollarSign, href: '/commissions' },
   { label: 'Receipts', icon: FileBarChart, href: '/receipts' },
   { label: 'Reconciliation', icon: Scale, href: '/reconciliation' },

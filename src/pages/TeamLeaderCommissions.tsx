@@ -103,8 +103,10 @@ export default function TeamLeaderCommissions() {
           } else if (commissionResponse?.data) {
             if (Array.isArray(commissionResponse.data)) {
               allCommissions = commissionResponse.data;
-            } else if (commissionResponse.data.commissions) {
-              allCommissions = commissionResponse.data.commissions;
+            } else if ((commissionResponse.data as any).data && Array.isArray((commissionResponse.data as any).data)) {
+              allCommissions = (commissionResponse.data as any).data;
+            } else if ((commissionResponse.data as any).commissions && Array.isArray((commissionResponse.data as any).commissions)) {
+              allCommissions = (commissionResponse.data as any).commissions;
             }
           }
         } catch (err) {

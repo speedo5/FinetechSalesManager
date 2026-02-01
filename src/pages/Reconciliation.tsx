@@ -19,6 +19,7 @@ import { PhoneSource } from '@/types';
 import { salesService } from '@/services/salesService';
 import { imeiService } from '@/services/imeiService';
 import { commissionService } from '@/services/commissionService';
+import { exportToCSV } from '@/lib/pdfGenerator';
 
 type DiscrepancyType = 'imei_mismatch' | 'missing_payment' | 'double_sale' | 'missing_receipt';
 
@@ -60,7 +61,12 @@ export default function Reconciliation() {
       if (managerRegion) {
         salesData = salesData.filter((s: any) => s.region === managerRegion);
       }
-      setSales(salesData);
+      // Normalize sales data to ensure source field is present and lowercase
+      const normalizedSales = salesData.map((s: any) => ({
+        ...s,
+        source: (s.source || s.phoneSource || 'watu').toLowerCase(), // Ensure lowercase for consistent comparison
+      }));
+      setSales(normalizedSales);
 
       // Load all IMEIs
       const imeisResponse = await imeiService.getAll();
@@ -73,15 +79,50 @@ export default function Reconciliation() {
       if (managerRegion) {
         imeisData = imeisData.filter((i: any) => i.region === managerRegion);
       }
-      setImeis(imeisData);
+      // Normalize IMEI data with proper status mapping (same as Inventory.tsx)
+      const normalizedImeis = imeisData.map((i: any) => {
+        const statusMap: Record<string, string> = {
+          'in_stock': 'IN_STOCK',
+          'allocated': 'ALLOCATED',
+          'sold': 'SOLD',
+          'locked': 'LOCKED',
+          'lost': 'LOST',
+        };
+        const status = statusMap[i.status?.toLowerCase()] || i.status || 'IN_STOCK';
+        // Normalize source: use lowercase to ensure consistency
+        const source = (i.source || i.phoneSource || 'watu').toLowerCase() as PhoneSource;
+        
+        return {
+          id: i.id || i._id,
+          imei: i.imei,
+          productId: i.productId?._id || i.productId || '',
+          productName: i.productId?.name || i.productName || 'Unknown',
+          capacity: i.capacity || '64GB',
+          status,
+          sellingPrice: i.price || i.sellingPrice || 0,
+          commission: i.commissionConfig ? 
+            (i.commissionConfig.foCommission || 0) + 
+            (i.commissionConfig.teamLeaderCommission || 0) + 
+            (i.commissionConfig.regionalManagerCommission || 0) : 0,
+          commissionConfig: i.commissionConfig,
+          source,
+          registeredAt: i.registeredAt ? new Date(i.registeredAt) : new Date(),
+        };
+      });
+      setImeis(normalizedImeis);
 
       // Load all commissions
       const commissionsResponse = await commissionService.getAll();
-      let commissionsData = Array.isArray(commissionsResponse.data?.commissions)
-        ? commissionsResponse.data.commissions
-        : Array.isArray(commissionsResponse.data)
-          ? commissionsResponse.data
-          : [];
+      let commissionsData: any[] = [];
+      
+      if (Array.isArray(commissionsResponse.data)) {
+        commissionsData = commissionsResponse.data;
+      } else if ((commissionsResponse.data as any)?.data && Array.isArray((commissionsResponse.data as any).data)) {
+        commissionsData = (commissionsResponse.data as any).data;
+      } else if ((commissionsResponse.data as any)?.commissions && Array.isArray((commissionsResponse.data as any).commissions)) {
+        commissionsData = (commissionsResponse.data as any).commissions;
+      }
+      
       // Filter by manager's region if regional manager
       if (managerRegion) {
         commissionsData = commissionsData.filter((c: any) => c.region === managerRegion);
@@ -123,16 +164,17 @@ export default function Reconciliation() {
   // Company-wise breakdown
   const companyBreakdown = {
     watu: {
-      sales: sales.filter(s => s.source === 'watu' || getSaleSource(s.imei) === 'watu'),
-      imeis: imeis.filter(i => i.source === 'watu'),
+      // Use filteredSales so company totals reflect region and selected source
+      sales: filteredSales.filter(s => (s.source?.toLowerCase() || 'watu') === 'watu' || getSaleSource(s.imei)?.toLowerCase() === 'watu'),
+      imeis: imeis.filter(i => (i.source?.toLowerCase() || 'watu') === 'watu'),
     },
     mogo: {
-      sales: sales.filter(s => s.source === 'mogo' || getSaleSource(s.imei) === 'mogo'),
-      imeis: imeis.filter(i => i.source === 'mogo'),
+      sales: filteredSales.filter(s => (s.source?.toLowerCase() || 'watu') === 'mogo' || getSaleSource(s.imei)?.toLowerCase() === 'mogo'),
+      imeis: imeis.filter(i => (i.source?.toLowerCase() || 'watu') === 'mogo'),
     },
     onfon: {
-      sales: sales.filter(s => s.source === 'onfon' || getSaleSource(s.imei) === 'onfon'),
-      imeis: imeis.filter(i => i.source === 'onfon'),
+      sales: filteredSales.filter(s => (s.source?.toLowerCase() || 'watu') === 'onfon' || getSaleSource(s.imei)?.toLowerCase() === 'onfon'),
+      imeis: imeis.filter(i => (i.source?.toLowerCase() || 'watu') === 'onfon'),
     },
   };
 
@@ -245,6 +287,120 @@ export default function Reconciliation() {
     { label: 'Net Revenue', value: `Ksh ${netRevenue.toLocaleString()}`, ok: true },
   ];
 
+  const handleExportReconciliation = () => {
+    // Prepare sales data for export
+    const salesForExport = filteredSales.map(sale => ({
+      receiptNo: sale.etrReceiptNo || 'N/A',
+      date: new Date(sale.createdAt).toLocaleDateString(),
+      product: sale.productName,
+      imei: sale.imei || 'N/A',
+      quantity: sale.quantity,
+      amount: sale.saleAmount,
+      vat: sale.vatAmount,
+      total: sale.saleAmount + sale.vatAmount,
+      paymentMethod: sale.paymentMethod,
+      paymentRef: sale.paymentReference || 'N/A',
+      sellerName: sale.sellerName || 'N/A',
+      foCode: sale.foCode || 'N/A',
+      source: sale.source || getSaleSource(sale.imei) || 'N/A',
+      clientName: sale.clientName || 'N/A',
+      clientPhone: sale.clientPhone || 'N/A',
+    }));
+
+    // Prepare summary data
+    const summaryData = [
+      { metric: 'Report Date', value: new Date().toLocaleDateString() },
+      { metric: 'Source Filter', value: selectedSource === 'all' ? 'All Sources' : selectedSource },
+      { metric: 'Total Sales', value: totalSalesAmount },
+      { metric: 'Total VAT', value: totalVAT },
+      { metric: 'Total Commissions', value: totalCommissions },
+      { metric: 'Net Revenue', value: netRevenue },
+      { metric: 'Phone Sales Count', value: phoneSales.length },
+      { metric: 'Accessory Sales Count', value: accessorySales.length },
+      { metric: 'M-PESA Transactions', value: mpesaSales.length },
+      { metric: 'Cash Transactions', value: cashSales.length },
+      { metric: 'Discrepancies Found', value: filteredDiscrepancies.length },
+    ];
+
+    // Prepare company performance data
+    const companyPerformanceData = (['watu', 'mogo', 'onfon'] as PhoneSource[]).map(source => {
+      const data = companyBreakdown[source];
+      const revenue = data.sales.reduce((sum, s) => sum + s.saleAmount, 0);
+      const vat = data.sales.reduce((sum, s) => sum + s.vatAmount, 0);
+      const soldCount = data.imeis.filter(i => i.status === 'SOLD').length;
+      const inStockCount = data.imeis.filter(i => i.status === 'IN_STOCK').length;
+      const allocatedCount = data.imeis.filter(i => i.status === 'ALLOCATED').length;
+      const lockedCount = data.imeis.filter(i => i.status === 'LOCKED').length;
+      const lostCount = data.imeis.filter(i => i.status === 'LOST').length;
+      const totalImeis = data.imeis.length;
+      const mpesaCount = data.sales.filter(s => s.paymentMethod === 'mpesa').length;
+      const cashCount = data.sales.filter(s => s.paymentMethod === 'cash').length;
+      const mpesaAmount = data.sales.filter(s => s.paymentMethod === 'mpesa').reduce((sum, s) => sum + s.saleAmount, 0);
+      const cashAmount = data.sales.filter(s => s.paymentMethod === 'cash').reduce((sum, s) => sum + s.saleAmount, 0);
+      const totalStockValue = data.imeis.filter(i => i.status === 'IN_STOCK').reduce((sum, i) => sum + i.sellingPrice, 0);
+      
+      return {
+        company: source.toUpperCase(),
+        totalSales: data.sales.length,
+        totalRevenue: revenue,
+        totalVAT: vat,
+        totalWithVAT: revenue + vat,
+        phoneSold: soldCount,
+        allocated: allocatedCount,
+        inStock: inStockCount,
+        locked: lockedCount,
+        lost: lostCount,
+        totalPhones: totalImeis,
+        inStockValue: totalStockValue,
+        mpesaTransactions: mpesaCount,
+        mpesaAmount: mpesaAmount,
+        cashTransactions: cashCount,
+        cashAmount: cashAmount,
+      };
+    });
+
+    // Export sales as main file
+    exportToCSV(salesForExport, `reconciliation-sales-${new Date().toISOString().split('T')[0]}`, [
+      { key: 'receiptNo', header: 'Receipt No' },
+      { key: 'date', header: 'Date' },
+      { key: 'product', header: 'Product' },
+      { key: 'imei', header: 'IMEI' },
+      { key: 'quantity', header: 'Quantity' },
+      { key: 'amount', header: 'Amount (Ksh)' },
+      { key: 'vat', header: 'VAT (Ksh)' },
+      { key: 'total', header: 'Total (Ksh)' },
+      { key: 'paymentMethod', header: 'Payment Method' },
+      { key: 'paymentRef', header: 'Payment Ref' },
+      { key: 'sellerName', header: 'Seller' },
+      { key: 'foCode', header: 'FO Code' },
+      { key: 'source', header: 'Source' },
+      { key: 'clientName', header: 'Client Name' },
+      { key: 'clientPhone', header: 'Client Phone' },
+    ]);
+
+    // Export company performance
+    exportToCSV(companyPerformanceData, `company-performance-${new Date().toISOString().split('T')[0]}`, [
+      { key: 'company', header: 'Company' },
+      { key: 'totalSales', header: 'Total Sales' },
+      { key: 'totalRevenue', header: 'Revenue (Ksh)' },
+      { key: 'totalVAT', header: 'VAT (Ksh)' },
+      { key: 'totalWithVAT', header: 'Total with VAT (Ksh)' },
+      { key: 'phoneSold', header: 'Phones Sold' },
+      { key: 'inStock', header: 'In Stock' },
+      { key: 'totalPhones', header: 'Total Phones' },
+      { key: 'mpesaTransactions', header: 'M-PESA Count' },
+      { key: 'mpesaAmount', header: 'M-PESA Amount (Ksh)' },
+      { key: 'cashTransactions', header: 'Cash Count' },
+      { key: 'cashAmount', header: 'Cash Amount (Ksh)' },
+    ]);
+
+    // Also export summary
+    exportToCSV(summaryData, `reconciliation-summary-${new Date().toISOString().split('T')[0]}`, [
+      { key: 'metric', header: 'Metric' },
+      { key: 'value', header: 'Value' },
+    ]);
+  };
+
   return (
     <MainLayout>
       <div className="animate-fade-in">
@@ -290,7 +446,7 @@ export default function Reconciliation() {
               <Calendar className="h-4 w-4 mr-2" />
               <span className="hidden sm:inline">Select Period</span>
             </Button>
-            <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
+            <Button onClick={handleExportReconciliation} className="bg-primary hover:bg-primary/90 text-primary-foreground">
               <Download className="h-4 w-4 mr-2" />
               <span className="hidden sm:inline">Export</span>
             </Button>

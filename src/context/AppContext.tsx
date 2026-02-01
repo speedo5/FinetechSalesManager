@@ -5,6 +5,7 @@ import { productService } from '@/services/productService';
 import { imeiService } from '@/services/imeiService';
 import { authService } from '@/services/authService';
 import { commissionService } from '@/services/commissionService';
+import { salesService } from '@/services/salesService';
 
 // ============================================================================
 // APP CONTEXT - Application State Management
@@ -61,13 +62,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
+        // Sales
+        try {
+          const salesRes = await salesService.getAll();
+          if (salesRes.success && salesRes.data) {
+            const salesList = Array.isArray(salesRes.data) 
+              ? salesRes.data 
+              : salesRes.data.data || salesRes.data.sales || salesRes.data.sales || [];
+            setSales(salesList);
+          }
+        } catch (err) {
+          console.warn('Failed to fetch sales from API:', err?.message || err);
+        }
+
         // Commissions
         try {
           const response = await commissionService.getAll();
           if (response.success && response.data) {
-            const commissionsList = Array.isArray(response.data) 
-              ? response.data 
-              : response.data.data || response.data.commissions || response.data.commissions || [];
+            // Handle different response structures from backend
+            let commissionsList: Commission[] = [];
+            
+            if (Array.isArray(response.data)) {
+              // Direct array response
+              commissionsList = response.data;
+            } else if ((response.data as any).commissions && Array.isArray((response.data as any).commissions)) {
+              // CommissionListResponse with commissions property
+              commissionsList = (response.data as any).commissions;
+            } else if ((response.data as any).data && Array.isArray((response.data as any).data)) {
+              // Response with data property
+              commissionsList = (response.data as any).data;
+            }
+            
             setCommissions(commissionsList);
           }
         } catch (err) {

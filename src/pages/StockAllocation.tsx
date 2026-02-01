@@ -699,27 +699,21 @@ export default function StockAllocation() {
       recipientId = recipient?.id || selectedRecipient;
     }
     
-    console.log('Found recipient:', recipient?.name);
+      console.log('Found recipient:', recipient?.name);
     console.log('Using recipientId:', recipientId);
-    
-    if (!recipient) {
-      console.log('❌ Recipient not found in users list');
-      toast.error('Selected recipient not found in the system');
-      return;
-    }
 
     try {
       setIsSaving(true);
       console.log('Calling allocateStock with:', {
         imeiId: selectedImei.id,
         toUserId: recipientId,
-        notes: `Allocation from ${currentUser.name} to ${recipient.name}`,
+        notes: `Allocation from ${currentUser.name} to ${recipient?.name || recipientId}`,
       });
       
       const response = await stockAllocationService.allocateStock({
         imeiId: selectedImei.id,
         toUserId: recipientId,
-        notes: `Allocation from ${currentUser.name} to ${recipient.name}`,
+        notes: `Allocation from ${currentUser.name} to ${recipient?.name || recipientId}`,
       });
 
       console.log('Allocation response:', response);
@@ -737,17 +731,17 @@ export default function StockAllocation() {
           // Continue anyway as the allocation was successful
         }
         
-        toast.success(`Stock allocated to ${recipient.name}`);
+        toast.success(`Stock allocated to ${recipient?.name || recipientId}`);
         
         // Update local state
         setLoadedImeis(prev => prev.map(imei => {
           if (imei.id === selectedImei.id) {
             return {
               ...imei,
-              status: 'ALLOCATED',
-              currentOwnerId: recipientId,
-              currentOwnerRole: recipient.role,
-              allocatedAt: new Date(),
+                status: 'ALLOCATED',
+                  currentOwnerId: recipientId,
+                  currentOwnerRole: recipient?.role || 'field_officer',
+                  allocatedAt: new Date(),
             };
           }
           return imei;
@@ -764,9 +758,9 @@ export default function StockAllocation() {
           fromUserName: currentUser.name,
           fromRole: currentUser.role,
           toUserId: recipientId,
-          toUserName: recipient.name,
-          toRole: recipient.role,
-          level: recipient.role === 'regional_manager' ? 'regional_manager' : recipient.role === 'team_leader' ? 'team_leader' : 'field_officer',
+          toUserName: recipient?.name || recipientId,
+          toRole: recipient?.role || 'field_officer',
+          level: recipient?.role === 'regional_manager' ? 'regional_manager' : recipient?.role === 'team_leader' ? 'team_leader' : 'field_officer',
           status: 'completed',
           createdAt: new Date(),
           completedAt: new Date(),
@@ -1165,23 +1159,24 @@ export default function StockAllocation() {
                     const recentAllocations = stockAllocations.filter(a => {
                       const date = new Date(a.createdAt);
                       const now = new Date();
-                      return a.toUserId === recipient.id && 
+                      return a.toUserId === recipient?.id && 
                              a.fromUserId === currentUser.id &&
                              (now.getTime() - date.getTime()) < 7 * 24 * 60 * 60 * 1000;
                     }).length;
 
                     // Calculate their subordinates' performance (if they have any)
                     const subordinateCount = users.filter(u => {
-                      if (recipient.role === 'regional_manager') {
-                        return u.role === 'team_leader' && u.regionalManagerId === recipient.id;
-                      } else if (recipient.role === 'team_leader') {
-                        return u.role === 'field_officer' && u.teamLeaderId === recipient.id;
+                      if (recipient?.role === 'regional_manager') {
+                        return u.role === 'team_leader' && u.regionalManagerId === recipient?.id;
+                      } else if (recipient?.role === 'team_leader') {
+                        return u.role === 'field_officer' && u.teamLeaderId === recipient?.id;
                       }
                       return false;
                     }).length;
 
-                    const sellThroughRate = recipient.totalStock + recipient.soldStock > 0
-                      ? Math.round((recipient.soldStock / (recipient.totalStock + recipient.soldStock)) * 100)
+                    const totalStockNum = (recipient?.totalStock || 0) + (recipient?.soldStock || 0);
+                    const sellThroughRate = totalStockNum > 0
+                      ? Math.round(((recipient?.soldStock || 0) / totalStockNum) * 100)
                       : 0;
 
                     return (
@@ -1192,11 +1187,11 @@ export default function StockAllocation() {
                               <Users className="h-6 w-6 text-primary" />
                             </div>
                             <div className="flex-1">
-                              <h3 className="font-semibold">{recipient.name}</h3>
-                              <p className="text-sm text-muted-foreground">{recipient.region || 'No region'}</p>
+                              <h3 className="font-semibold">{recipient?.name || 'Unknown'}</h3>
+                              <p className="text-sm text-muted-foreground">{recipient?.region || 'No region'}</p>
                             </div>
                             <Badge variant="outline" className="text-xs">
-                              {recipient.role.replace('_', ' ')}
+                              {recipient?.role ? recipient.role.replace('_', ' ') : 'unknown'}
                             </Badge>
                           </div>
                           
@@ -1204,11 +1199,11 @@ export default function StockAllocation() {
                           <div className="mt-4 pt-4 border-t">
                             <div className="grid grid-cols-3 gap-2 text-center">
                               <div className="bg-muted/50 rounded-lg p-2">
-                                <p className="text-xl font-bold">{recipient.totalStock}</p>
+                                <p className="text-xl font-bold">{recipient?.totalStock ?? 0}</p>
                                 <p className="text-xs text-muted-foreground">In Hand</p>
                               </div>
                               <div className="bg-green-100 dark:bg-green-900/30 rounded-lg p-2">
-                                <p className="text-xl font-bold text-green-600">{recipient.soldStock}</p>
+                                <p className="text-xl font-bold text-green-600">{recipient?.soldStock ?? 0}</p>
                                 <p className="text-xs text-muted-foreground">Sold</p>
                               </div>
                               <div className="bg-blue-100 dark:bg-blue-900/30 rounded-lg p-2">
@@ -1517,7 +1512,7 @@ export default function StockAllocation() {
                             }))
                             .map((recipient) => (
                               <SelectItem key={recipient.effectiveId} value={recipient.effectiveId}>
-                                <span>{recipient.name}</span>
+                                <span>{recipient.name || recipient.effectiveId}</span>
                                 {recipient.region && <span className="ml-2 text-xs text-gray-500">({recipient.region})</span>}
                               </SelectItem>
                             ))}
@@ -1556,80 +1551,110 @@ export default function StockAllocation() {
             try {
               setIsSaving(true);
               const usersToSearch = loadedUsers.length > 0 ? loadedUsers : users;
-              const recipient = usersToSearch.find(u => u.id === recipientId);
-              if (!recipient) return;
-              
+              let recipient = usersToSearch.find(u => u.id === recipientId || (u as any)._id === recipientId || u.name === recipientId);
+              if (!recipient) {
+                // Try a looser match by normalized name (some UIs generate ids like `user-Name-Index`)
+                const nameFromId = typeof recipientId === 'string' && recipientId.startsWith('user-')
+                  ? recipientId.replace('user-', '').split('-').slice(0, -1).join(' ')
+                  : null;
+                if (nameFromId) {
+                  recipient = usersToSearch.find(u => u.name === nameFromId) as any;
+                }
+              }
+              if (!recipient) {
+                // Don't fail client-side — backend will attempt to resolve by id or name.
+                console.warn('Recipient not found locally, sending identifier to backend for lookup:', recipientId);
+              }
+
               const response = await stockAllocationService.bulkAllocateStock({
                 imeiIds: imeis.map(i => i.id),
                 toUserId: recipientId,
                 notes: `Bulk allocation from ${currentUser?.name || 'Admin'}`,
               });
 
-              if (response.success) {
-                // Update each IMEI in the database
-                try {
-                  const updatePromises = imeis.map(imei =>
+              if (!response || !response.success) {
+                throw new Error((response as any)?.message || 'Bulk allocation failed');
+              }
+
+              const results = response.data as any;
+              const successImeis: string[] = Array.isArray(results?.success) ? results.success : [];
+              const failedResults: any[] = Array.isArray(results?.failed) ? results.failed : [];
+
+              if (successImeis.length === 0) {
+                // Nothing succeeded
+                const reasons = failedResults.map(f => `${f.imeiId || f.imei || ''}: ${f.reason || f}`).join('; ');
+                toast.error(`No items allocated. ${reasons}`);
+                return;
+              }
+
+              // Update only successfully allocated IMEIs in DB
+              try {
+                const updatePromises = imeis
+                  .filter(i => successImeis.includes(i.imei) || successImeis.includes(i.id) )
+                  .map(imei =>
                     imeiService.update(imei.id, {
                       status: 'allocated',
                       currentOwnerId: recipientId,
                     }).catch(err => {
                       console.error(`Failed to update IMEI ${imei.id}:`, err);
-                      // Continue with others even if one fails
                     })
                   );
-                  await Promise.all(updatePromises);
-                  console.log('All IMEIs updated successfully');
-                } catch (imeiUpdateError) {
-                  console.error('Failed to update IMEIs:', imeiUpdateError);
-                  // Continue anyway as the allocation was successful
-                }
-                
-                // Update local state
-                const allocatedImeiIds = new Set(imeis.map(i => i.id));
-                setLoadedImeis(prev => prev.map(imei => {
-                  if (allocatedImeiIds.has(imei.id)) {
-                    return {
-                      ...imei,
-                      status: 'ALLOCATED',
-                      currentOwnerId: recipientId,
-                      currentOwnerRole: recipient.role,
-                      allocatedAt: new Date(),
-                    };
-                  }
-                  return imei;
-                }));
-
-                // Add allocation records
-                imeis.forEach(imei => {
-                  const newAllocation: StockAllocationType = {
-                    id: `alloc-${Date.now()}-${imei.id}`,
-                    productId: imei.productId,
-                    productName: imei.productName,
-                    imei: imei.imei,
-                    quantity: 1,
-                    fromUserId: currentUser?.id || '',
-                    fromUserName: currentUser?.name || 'Admin',
-                    fromRole: currentUser?.role || 'admin',
-                    toUserId: recipientId,
-                    toUserName: recipient.name,
-                    toRole: recipient.role,
-                    level: recipient.role === 'regional_manager' ? 'regional_manager' : recipient.role === 'team_leader' ? 'team_leader' : 'field_officer',
-                    status: 'completed',
-                    createdAt: new Date(),
-                    completedAt: new Date(),
-                  };
-                  
-                  setLoadedAllocations(prev => [newAllocation, ...prev]);
-                });
-
-                toast.success(`Allocated ${imeis.length} item(s) to ${recipient.name}`);
-                setBulkAllocateOpen(false);
-              } else {
-                toast.error((response as any).error || 'Failed to allocate stock');
+                await Promise.all(updatePromises);
+              } catch (imeiUpdateError) {
+                console.error('Failed to update IMEIs:', imeiUpdateError);
               }
+
+              // Update local state only for successfully allocated IMEIs
+              const successImeisSet = new Set(successImeis);
+              setLoadedImeis(prev => prev.map(imei => {
+                if (successImeisSet.has(imei.imei) || successImeisSet.has(imei.id)) {
+                  return {
+                    ...imei,
+                    status: 'ALLOCATED',
+                    currentOwnerId: recipientId,
+                    currentOwnerRole: (recipient && recipient.role) ? recipient.role : 'field_officer',
+                    allocatedAt: new Date(),
+                  };
+                }
+                return imei;
+              }));
+
+              // Add allocation records only for successful ones
+              imeis.forEach(imei => {
+                if (!(successImeisSet.has(imei.imei) || successImeisSet.has(imei.id))) return;
+                const newAllocation: StockAllocationType = {
+                  id: `alloc-${Date.now()}-${imei.id}`,
+                  productId: imei.productId,
+                  productName: imei.productName,
+                  imei: imei.imei,
+                  quantity: 1,
+                  fromUserId: currentUser?.id || '',
+                  fromUserName: currentUser?.name || 'Admin',
+                  fromRole: currentUser?.role || 'admin',
+                  toUserId: recipientId,
+                  toUserName: recipient?.name || recipientId,
+                  toRole: recipient?.role || 'field_officer',
+                  level: recipient?.role === 'regional_manager' ? 'regional_manager' : recipient?.role === 'team_leader' ? 'team_leader' : 'field_officer',
+                  status: 'completed',
+                  createdAt: new Date(),
+                  completedAt: new Date(),
+                };
+
+                setLoadedAllocations(prev => [newAllocation, ...prev]);
+              });
+
+              // Show summary toast
+              if (failedResults.length > 0) {
+                toast.success(`Allocated ${successImeis.length} item(s) to ${recipient?.name || recipientId}. ${failedResults.length} failed.`);
+              } else {
+                toast.success(`Allocated ${successImeis.length} item(s) to ${recipient?.name || recipientId}`);
+              }
+
+              // Close dialog
+              setBulkAllocateOpen(false);
             } catch (error: any) {
               console.error('Bulk allocation error:', error);
-              toast.error(error.message || 'Failed to allocate stock');
+              throw error; // rethrow so dialog can display an error
             } finally {
               setIsSaving(false);
             }

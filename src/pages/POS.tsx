@@ -433,14 +433,14 @@ export default function POS() {
         { saleId: createdSale.id, amount: saleAmount }
       );
 
-      // Reset form
+      // Reset form (keep selected source/company)
       setSelectedProduct('');
       setImeiSearch('');
       setSelectedImei(null);
       setQuantity(1);
       setPaymentReference('');
       setSelectedFO('');
-      setSelectedSource('watu');
+      // Note: NOT resetting setSelectedSource - keep company selection active
       setClientName('');
       setClientPhone('');
       setClientIdNumber('');

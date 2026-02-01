@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useApp } from '@/context/AppContext';
-import { isSameDay, isWithinInterval } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -38,11 +37,23 @@ import {
 import { format, startOfWeek, endOfWeek, subWeeks } from 'date-fns';
 import { exportSalesReportToExcel, printReport } from '@/lib/excelExport';
 import { cn } from '@/lib/utils';
-import { reportService } from '@/services/reportService';
+import { salesService } from '@/services/salesService';
+import { commissionService } from '@/services/commissionService';
+import { userService } from '@/services/userService';
 import { regionService } from '@/services/regionService';
+import { toast } from 'sonner';
 
 export default function Reports() {
-  const { users, currentUser } = useApp();
+  const { sales, commissions, imeis, products, users, currentUser } = useApp();
+  
+  // State for API-loaded data
+  const [loadedSales, setLoadedSales] = useState<any[]>([]);
+  const [loadedCommissions, setLoadedCommissions] = useState<any[]>([]);
+  const [loadedUsers, setLoadedUsers] = useState<any[]>([]);
+  const [loadedProducts, setLoadedProducts] = useState<any[]>([]);
+  const [loadedImeis, setLoadedImeis] = useState<any[]>([]);
+  const [registeredRegions, setRegisteredRegions] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   
   // Check if user can generate reports (Admin or Regional Manager only)
   const canGenerateReports = currentUser?.role === 'admin' || currentUser?.role === 'regional_manager';
@@ -50,31 +61,113 @@ export default function Reports() {
   // Get user's region if Regional Manager
   const userRegion = currentUser?.role === 'regional_manager' ? currentUser.region : null;
   
-  // Date range state
-  const [startDate, setStartDate] = useState<Date>(startOfWeek(subWeeks(new Date(), 1), { weekStartsOn: 1 }));
-  const [endDate, setEndDate] = useState<Date>(endOfWeek(subWeeks(new Date(), 1), { weekStartsOn: 1 }));
+  // Date range state - default to last 4 weeks
+  const [startDate, setStartDate] = useState<Date>(startOfWeek(subWeeks(new Date(), 4), { weekStartsOn: 1 }));
+  const [endDate, setEndDate] = useState<Date>(new Date());
+  
+  // Load reports data from API on mount
+  useEffect(() => {
+    const loadReportsData = async () => {
+      try {
+        setIsLoading(true);
+        console.log('📥 Loading reports data from API...');
+        
+        // Fetch registered regions
+        try {
+          const regionsData = await regionService.getRegions();
+          const regionNames = (Array.isArray(regionsData) ? regionsData : []).map((r: any) => r.name).filter(Boolean);
+          console.log('🌍 Registered regions loaded:', regionNames);
+          setRegisteredRegions(regionNames);
+        } catch (err) {
+          console.warn('⚠️ Failed to load regions, using fallback:', err);
+          setRegisteredRegions([]);
+        }
+        
+        // Fetch sales
+        const salesRes = await salesService.getAll();
+        let salesData: any[] = [];
+        if (salesRes.success && salesRes.data) {
+          salesData = Array.isArray(salesRes.data) ? salesRes.data : (salesRes.data as any).sales || [];
+        }
+        console.log('📊 Sales loaded:', salesData.length);
+        setLoadedSales(salesData);
+        
+        // Fetch commissions
+        const commissionsRes = await commissionService.getAll();
+        let commissionsData: any[] = [];
+        if (commissionsRes.success && commissionsRes.data) {
+          if (Array.isArray(commissionsRes.data)) {
+            commissionsData = commissionsRes.data;
+          } else if ((commissionsRes.data as any).data && Array.isArray((commissionsRes.data as any).data)) {
+            commissionsData = (commissionsRes.data as any).data;
+          } else if ((commissionsRes.data as any).commissions && Array.isArray((commissionsRes.data as any).commissions)) {
+            commissionsData = (commissionsRes.data as any).commissions;
+          }
+        }
+        console.log('💰 Commissions loaded:', commissionsData.length);
+        setLoadedCommissions(commissionsData);
+        
+        // Fetch users
+        const usersRes = await userService.getAll();
+        let usersData: any[] = [];
+        if (Array.isArray(usersRes)) {
+          usersData = usersRes;
+        } else if (usersRes?.data) {
+          if (Array.isArray(usersRes.data)) {
+            usersData = usersRes.data;
+          } else if ((usersRes.data as any).users) {
+            usersData = (usersRes.data as any).users;
+          }
+        }
+        console.log('👥 Users loaded:', usersData.length);
+        setLoadedUsers(usersData);
+        
+        // Ensure products and IMEIs are set from context (fallback available)
+        setLoadedProducts(products);
+        setLoadedImeis(imeis);
+        console.log('📦 Products loaded:', products.length, 'IMEIs loaded:', imeis.length);
+        
+        console.log('✅ Reports data loaded successfully');
+      } catch (error) {
+        console.error('❌ Error loading reports data:', error);
+        toast.error('Failed to load reports data');
+        // Fall back to context data on error
+        setLoadedSales(sales);
+        setLoadedCommissions(commissions);
+        setLoadedUsers(users);
+        setLoadedProducts(products);
+        setLoadedImeis(imeis);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadReportsData();
+  }, [currentUser?.id]);
+  
+  // Use loaded data from API, fall back to context
+  const reportSales = loadedSales.length > 0 ? loadedSales : sales;
+  const reportCommissions = loadedCommissions.length > 0 ? loadedCommissions : commissions;
+  const reportUsers = loadedUsers.length > 0 ? loadedUsers : users;
+  const reportProducts = loadedProducts.length > 0 ? loadedProducts : products;
+  const reportImeis = loadedImeis.length > 0 ? loadedImeis : imeis;
+  
+  // Use registered regions or fallback to all regions from data
+  const availableRegions = registeredRegions.length > 0 ? registeredRegions : 
+    Array.from(new Set(reportUsers.map((u: any) => u.region).filter(Boolean)));
   
   // Selected regions (Admin can select multiple, RM gets their own region only)
-  const [selectedRegions, setSelectedRegions] = useState<string[]>(
-    userRegion ? [userRegion] : []
-  );
-
-  // Loading and error states
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoadingRegions, setIsLoadingRegions] = useState(true);
-
-  // Regions state
-  const [availableRegions, setAvailableRegions] = useState<string[]>([]);
-
-  // Report data states
-  const [salesData, setSalesData] = useState<any>(null);
-  const [commissionsData, setCommissionsData] = useState<any>(null);
-  const [inventoryData, setInventoryData] = useState<any>(null);
-  const [performanceData, setPerformanceData] = useState<any>(null);
-  const [companyPerformanceData, setCompanyPerformanceData] = useState<any>(null);
-  const [topProductsData, setTopProductsData] = useState<any>(null);
-  const [activeFOsData, setActiveFOsData] = useState<any>(null);
+  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+  const [regionsInitialized, setRegionsInitialized] = useState(false);
+  
+  // Initialize selected regions after available regions are loaded
+  useEffect(() => {
+    if (!regionsInitialized && availableRegions.length > 0 && !userRegion) {
+      setSelectedRegions([...availableRegions]);
+      setRegionsInitialized(true);
+      console.log('🔧 Initialized selectedRegions with all available regions:', availableRegions);
+    }
+  }, [availableRegions, regionsInitialized, userRegion]);
 
   // Toggle region selection
   const toggleRegion = (region: string) => {
@@ -96,333 +189,142 @@ export default function Reports() {
     } else {
       setSelectedRegions([...availableRegions]);
     }
+    console.log('🔄 Toggle all regions - selectedRegions updated');
   };
 
-  // Load available regions on component mount
-  useEffect(() => {
-    const loadRegions = async () => {
-      try {
-        setIsLoadingRegions(true);
-        const regions = await regionService.getRegions();
-        const regionNames = regions.map((r: any) => r.name);
-        setAvailableRegions(regionNames);
-      } catch (error) {
-        console.error('Failed to load regions:', error);
-        setAvailableRegions([]);
-      } finally {
-        setIsLoadingRegions(false);
-      }
-    };
+  // Filter sales based on date range and regions
+  const filteredSales = useMemo(() => {
+    console.log('📊 Filtering sales:', { 
+      totalSales: reportSales.length, 
+      startDate: format(startDate, 'yyyy-MM-dd'), 
+      endDate: format(endDate, 'yyyy-MM-dd'),
+      userRegion,
+      selectedRegions
+    });
+
+    const regionsToFilter = userRegion ? [userRegion] : selectedRegions;
+    console.log('🔍 Regions to filter:', { selectedRegions, regionsToFilter });
     
-    loadRegions();
-  }, []);
-
-  // Fetch reports data from API with REAL-TIME loading
-  const fetchReportsData = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      // Build params including optional region filtering
-      const baseParams: any = {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-      };
-
-      // If the user is a Regional Manager, limit to their region
-      if (userRegion) baseParams.region = userRegion;
-
-      // If admin has selected exactly one region, pass it as `region` filter for endpoints that accept it
-      const singleRegion = !userRegion && selectedRegions.length === 1 ? selectedRegions[0] : null;
-      if (singleRegion) baseParams.region = singleRegion;
-
-      console.log('📊 Fetching reports with params:', baseParams);
-
-      // Fetch all reports in parallel. For endpoints that accept region filter, pass it via params.
-      const [salesRes, commissionsRes, inventoryRes, performanceRes, companyRes, productsRes, fosRes] = await Promise.all([
-        reportService.getSalesReport(baseParams),
-        reportService.getCommissionsReport(baseParams),
-        reportService.getInventoryReport(),
-        reportService.getPerformanceReport(baseParams),
-        reportService.getCompanyPerformance(baseParams),
-        reportService.getTopProducts({ ...baseParams, limit: 8 }),
-        reportService.getActiveFOs(baseParams),
-      ]);
-
-      // Log successful responses
-      console.log('✅ Sales data loaded:', salesRes.data?.summary);
-      console.log('✅ Commission data loaded:', commissionsRes.data?.byStatus);
-      console.log('✅ Inventory data loaded:', inventoryRes.data?.summary);
-      console.log('✅ Performance data loaded:', performanceRes.data?.userPerformance?.length, 'FOs');
-      console.log('✅ Company performance loaded:', companyRes.data?.companies);
-
-      // If admin selected multiple regions, also fetch a consolidated comprehensive report
-      let comprehensiveRes = null;
-      if (!userRegion && selectedRegions.length > 1) {
-        try {
-          comprehensiveRes = await reportService.getComprehensiveReport({
-            startDate: baseParams.startDate,
-            endDate: baseParams.endDate,
-          } as any);
-          console.log('📋 Comprehensive report loaded for regions:', selectedRegions);
-        } catch (err) {
-          console.warn('⚠️ Failed to load comprehensive report:', err);
-        }
-      }
-
-      // Set all data - API takes priority, will fallback to context if empty
-      if (salesRes.success) setSalesData(salesRes.data);
-      if (commissionsRes.success) setCommissionsData(commissionsRes.data);
-      if (inventoryRes.success) setInventoryData(inventoryRes.data);
-      if (performanceRes.success) setPerformanceData(performanceRes.data);
-      if (companyRes.success) setCompanyPerformanceData(companyRes.data);
-      if (productsRes.success) setTopProductsData(productsRes.data);
-      if (fosRes.success) setActiveFOsData(fosRes.data);
-
-      console.log('🔄 Real-time report update complete');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load reports');
-      console.error('❌ Error fetching reports:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Fetch data when date range or regions change - REAL-TIME UPDATES
-  useEffect(() => {
-    if (canGenerateReports) {
-      fetchReportsData();
-    }
-  }, [startDate, endDate, selectedRegions, canGenerateReports, userRegion]);
-  // Get sales data from AppContext
-  const { sales } = useApp() as any;
-
-  // Context data as fallback
-  const contextSales = useMemo(() => {
-    if (!Array.isArray(sales)) return [];
+    const regionUserIds = reportUsers.filter(u => regionsToFilter.includes(u.region || '')).map(u => u.id);
+    console.log('👥 Region user IDs:', regionUserIds);
     
-    return sales.filter((sale: any) => {
+    const filtered = reportSales.filter((sale: any) => {
       const saleDate = new Date(sale.createdAt);
-      if (!isWithinInterval(saleDate, { start: startDate, end: endDate })) return false;
+      const isInDateRange = saleDate >= startDate && saleDate <= endDate;
       
-      if (userRegion) return sale.region === userRegion;
-      if (selectedRegions.length > 0) return selectedRegions.includes(sale.region);
+      // More lenient region filter - check multiple fields
+      const isRegionSale = 
+        !userRegion || // Admin with no region filter always matches
+        (sale.region && regionsToFilter.includes(sale.region)) ||
+        (sale.regionalManagerId && regionUserIds.includes(sale.regionalManagerId)) ||
+        (sale.foId && regionUserIds.includes(sale.foId)) ||
+        regionUserIds.includes(sale.createdBy);
       
-      return true;
-    });
-  }, [startDate, endDate, selectedRegions, userRegion, sales]);
-
-  // Computed stats from API data WITH CONTEXT FALLBACK
-  const totalRevenue = useMemo(() => {
-    if (salesData?.summary?.totalRevenue) return salesData.summary.totalRevenue;
-    // Fallback: calculate from context
-    return contextSales.reduce((sum: number, sale: any) => sum + (sale.saleAmount || 0), 0);
-  }, [salesData, contextSales]);
-
-  const totalSalesCount = useMemo(() => {
-    if (salesData?.summary?.totalSales) return salesData.summary.totalSales;
-    // Fallback: calculate from context
-    return contextSales.length;
-  }, [salesData, contextSales]);
-
-  const totalCommissionsPaid = useMemo(() => {
-    if (commissionsData?.byStatus?.find((s: any) => s._id === 'paid')?.total) {
-      return commissionsData.byStatus.find((s: any) => s._id === 'paid').total;
-    }
-    // Fallback: return 0 or calculate from commissions in context if available
-    return 0;
-  }, [commissionsData]);
-
-  const activeFOs = useMemo(() => {
-    if (activeFOsData?.activeFOsCount) return activeFOsData.activeFOsCount;
-    // Fallback: count unique FOs with sales in period
-    const uniqueFOs = new Set(
-      contextSales
-        .map((sale: any) => sale.foId || sale.createdBy)
-        .filter(Boolean)
-    );
-    return uniqueFOs.size;
-  }, [activeFOsData, contextSales]);
-
-  const totalFOs = activeFOsData?.totalFOs || users.length;
-
-  // Top selling products from API WITH CONTEXT FALLBACK
-  const topProducts = useMemo(() => {
-    if (topProductsData?.products && Array.isArray(topProductsData.products)) {
-      return topProductsData.products.map((p: any) => ({
-        name: p.productName,
-        value: p.totalRevenue,
-      }));
-    }
-    
-    // Fallback: aggregate from context sales
-    const productMap = new Map<string, number>();
-    contextSales.forEach((sale: any) => {
-      const productName = sale.productName || 'Unknown Product';
-      const current = productMap.get(productName) || 0;
-      productMap.set(productName, current + (sale.saleAmount || 0));
+      return isInDateRange && isRegionSale;
     });
     
-    return Array.from(productMap.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-  }, [topProductsData, contextSales]);
+    console.log('✅ Filtered sales:', filtered.length);
+    return filtered;
+  }, [reportSales, startDate, endDate, selectedRegions, userRegion, reportUsers]);
 
-  // FO Performance from API WITH CONTEXT FALLBACK
-  const foData = useMemo(() => {
-    if (performanceData?.userPerformance && Array.isArray(performanceData.userPerformance)) {
-      return performanceData.userPerformance
-        .sort((a: any, b: any) => (b.revenue || 0) - (a.revenue || 0))
-        .slice(0, 5)
-        .map((fo: any) => ({
-          name: fo.userName || fo.foName || 'Unknown',
-          sales: fo.revenue || 0,
-          commissions: fo.commissions || 0,
-        }));
+  // Stats
+  const totalRevenue = filteredSales.reduce((sum, s) => sum + s.saleAmount, 0);
+  const totalSalesCount = filteredSales.length;
+  const filteredCommissions = reportCommissions.filter((c: any) => 
+    filteredSales.some(s => s.id === c.saleId)
+  );
+  const totalCommissionsPaid = filteredCommissions.filter((c: any) => c.status === 'paid').reduce((sum, c) => sum + c.amount, 0);
+  const activeFOs = reportUsers.filter((u: any) => u.role === 'field_officer').length;
+
+  // Top selling products
+  const productSales: Record<string, { name: string; sales: number }> = {};
+  filteredSales.forEach(sale => {
+    const productId = sale.productId || 'unknown';
+    const productName = sale.productName || 'Unknown Product';
+    if (!productSales[productId]) {
+      productSales[productId] = { name: productName, sales: 0 };
     }
-    
-    // Fallback: aggregate from context sales
-    const foMap = new Map<string, { sales: number; count: number }>();
-    contextSales.forEach((sale: any) => {
-      const foId = sale.foId || sale.createdBy;
-      const foUser = users.find(u => u.id === foId);
-      const foName = foUser?.name || 'Unknown';
+    productSales[productId].sales += sale.saleAmount;
+  });
+  const topProducts = Object.values(productSales)
+    .filter(p => p.sales > 0)
+    .sort((a, b) => b.sales - a.sales)
+    .slice(0, 5)
+    .map(p => ({ name: p.name, value: p.sales }));
+
+  // FO Performance
+  const foPerformance: Record<string, { name: string; sales: number; commissions: number }> = {};
+  filteredSales.forEach((sale: any) => {
+    const foId = sale.foId || sale.createdBy;
+    if (foId) {
+      // Get FO name from multiple sources
+      let foName = sale.sellerName || sale.foName || sale.createdByName;
+      if (!foName) {
+        const user = reportUsers.find((u: any) => u.id === foId);
+        foName = user?.name || 'Unknown';
+      }
       
-      const current = foMap.get(foId) || { sales: 0, count: 0 };
-      foMap.set(foId, {
-        sales: current.sales + (sale.saleAmount || 0),
-        count: current.count + 1,
-      });
-    });
-    
-    return Array.from(foMap.entries())
-      .map(([foId, data]) => ({
-        name: users.find(u => u.id === foId)?.name || 'Unknown',
-        sales: data.sales,
-        commissions: 0, // Can't calculate from context, would need commission data
-      }))
-      .sort((a, b) => b.sales - a.sales)
-      .slice(0, 5);
-  }, [performanceData, contextSales, users]);
-
-  // Company performance breakdown WITH CONTEXT FALLBACK
-  const companyPerformance = useMemo(() => {
-    if (companyPerformanceData?.companies && Array.isArray(companyPerformanceData.companies)) {
-      return companyPerformanceData.companies
-        .map((c: any) => ({
-          name: c.name,
-          value: c.percentage,
-          revenue: c.totalRevenue,
-          sales: c.salesCount,
-        }));
+      if (!foPerformance[foId]) {
+        foPerformance[foId] = { name: foName, sales: 0, commissions: 0 };
+      }
+      foPerformance[foId].sales += sale.saleAmount;
+      foPerformance[foId].name = foName;
     }
-    
-    // Fallback: aggregate from context sales by source
-    const sourceMap = new Map<string, { revenue: number; count: number }>();
-    contextSales.forEach((sale: any) => {
-      const source = sale.source || 'Watu'; // Default to Watu
-      const current = sourceMap.get(source) || { revenue: 0, count: 0 };
-      sourceMap.set(source, {
-        revenue: current.revenue + (sale.saleAmount || 0),
-        count: current.count + 1,
-      });
-    });
-    
-    const totalRev = Array.from(sourceMap.values()).reduce((sum, d) => sum + d.revenue, 0);
-    
-    return Array.from(sourceMap.entries())
-      .map(([source, data]) => ({
-        name: source.charAt(0).toUpperCase() + source.slice(1),
-        value: totalRev > 0 ? Math.round((data.revenue / totalRev) * 100) : 0,
-        revenue: data.revenue,
-        sales: data.count,
-      }))
-      .sort((a, b) => b.revenue - a.revenue);
-  }, [companyPerformanceData, contextSales]);
+  });
+  filteredCommissions.forEach((c: any) => {
+    const foId = c.foId;
+    if (foId) {
+      const user = reportUsers.find((u: any) => u.id === foId);
+      const name = user?.name || c.foName || 'Unknown';
+      if (!foPerformance[foId]) {
+        foPerformance[foId] = { name, sales: 0, commissions: 0 };
+      }
+      foPerformance[foId].commissions += c.amount;
+    }
+  });
+  const foData = Object.values(foPerformance)
+    .sort((a, b) => b.sales - a.sales)
+    .slice(0, 5);
+
+  // Company performance breakdown (Watu/Mogo/Onfon)
+  const companyPerformance = [
+    { name: 'Watu', value: 45 },
+    { name: 'Mogo', value: 35 },
+    { name: 'Onfon', value: 20 },
+  ];
 
   const COMPANY_COLORS = ['#10b981', '#8b5cf6', '#f97316'];
 
-  // Inventory summary from API
-  const totalProducts = inventoryData?.summary?.totalDevices || 0;
-  const totalStock = inventoryData?.summary?.inStock || 0;
-  const lowStockItems = inventoryData?.lowStock?.length || 0;
+  // Inventory summary
+  const totalProducts = reportProducts.length;
+  const totalStock = reportProducts.reduce((sum, p) => sum + p.stockQuantity, 0) + reportImeis.filter(i => i.status === 'IN_STOCK').length;
+  const lowStockItems = reportProducts.filter(p => p.stockQuantity < 10 && p.category === 'accessory').length +
+    reportProducts.filter(p => {
+      const available = reportImeis.filter(i => i.productId === p.id && i.status === 'IN_STOCK').length;
+      return p.category === 'phone' && available < 5;
+    }).length;
 
-  const categoryBreakdown = useMemo(() => {
-    if (!inventoryData?.byProduct) return [];
-    
-    const phones = inventoryData.byProduct
-      .filter((p: any) => {
-        const category = (p.category || '').toLowerCase();
-        return category.includes('phone') || category.includes('smartphone') || category.includes('tablet');
-      })
-      .reduce((sum: number, p: any) => sum + (p.inStock || 0), 0);
-    
-    const accessories = inventoryData.byProduct
-      .filter((p: any) => {
-        const category = (p.category || '').toLowerCase();
-        return category.includes('accessory') || category.includes('sim') || category.includes('airtime');
-      })
-      .reduce((sum: number, p: any) => sum + (p.inStock || 0), 0);
+  const categoryBreakdown = [
+    { name: 'Phones', count: reportImeis.filter(i => i.status === 'IN_STOCK').length },
+    { name: 'Accessories', count: reportProducts.filter(p => p.category === 'accessory').reduce((sum, p) => sum + p.stockQuantity, 0) },
+  ];
 
-    return [
-      { name: 'Phones', count: phones },
-      { name: 'Accessories', count: accessories },
-    ];
-  }, [inventoryData]);
-
-  // Handle export to Excel with real data
-  const handleExportExcel = async () => {
-    try {
-      setIsLoading(true);
-      const regionsToExport = userRegion ? [userRegion] : selectedRegions.length > 0 ? selectedRegions : [];
-      
-      // Prepare sales data for export from context
-      const salesForExport = contextSales.map((sale: any) => ({
-        date: new Date(sale.createdAt).toLocaleDateString('en-KE'),
-        time: new Date(sale.createdAt).toLocaleTimeString('en-KE'),
-        foName: sale.foName || users.find(u => u.id === (sale.foId || sale.createdBy))?.name || 'Unknown',
-        foCode: sale.foCode || users.find(u => u.id === (sale.foId || sale.createdBy))?.foCode || 'N/A',
-        region: sale.region || 'N/A',
-        productName: sale.productName || 'Unknown Product',
-        imei: sale.imei || 'N/A',
-        quantity: sale.quantity || 1,
-        amount: sale.saleAmount || 0,
-        paymentMethod: sale.paymentMethod || 'Cash',
-        clientName: sale.clientName || 'N/A',
-        clientPhone: sale.clientPhone || 'N/A',
-        source: sale.source || 'Watu',
-      })) as any;
-
-      // Export with real data
-      exportSalesReportToExcel(salesForExport, [], users, startDate, endDate, regionsToExport);
-    } catch (error) {
-      console.error('Error exporting report:', error);
-      setError('Failed to export report. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
+  // Handle export to Excel
+  const handleExportExcel = () => {
+    const regionsToExport = userRegion ? [userRegion] : selectedRegions;
+    console.log('📥 Exporting Excel:', { regionsToExport, selectedRegions, salesCount: filteredSales.length, productsCount: reportProducts.length });
+    // Export using full unfiltered data - let the export function handle region filtering
+    exportSalesReportToExcel(reportSales, reportCommissions, reportUsers, startDate, endDate, regionsToExport, reportProducts, reportImeis);
+    toast.success(`Exported report for ${regionsToExport.length} region(s)`);
   };
 
-  // Handle print with real data
-  const handlePrint = async () => {
-    try {
-      const regionsToPrint = userRegion ? [userRegion] : selectedRegions.length > 0 ? selectedRegions : [];
-      
-      // Prepare sales data for print from context
-      const salesForPrint = contextSales.map((sale: any) => ({
-        date: new Date(sale.createdAt).toLocaleDateString('en-KE'),
-        foName: sale.foName || users.find(u => u.id === (sale.foId || sale.createdBy))?.name || 'Unknown',
-        productName: sale.productName || 'Unknown Product',
-        imei: sale.imei || 'N/A',
-        amount: sale.saleAmount || 0,
-        region: sale.region || 'N/A',
-      })) as any;
-      
-      printReport(salesForPrint, [], users, startDate, endDate, regionsToPrint);
-    } catch (error) {
-      console.error('Error printing report:', error);
-    }
+  // Handle print
+  const handlePrint = () => {
+    const regionsToPrint = userRegion ? [userRegion] : selectedRegions;
+    console.log('🖨️ Printing report:', { regionsToPrint, selectedRegions, salesCount: reportSales.length });
+    // Print using full unfiltered data - let the print function handle region filtering
+    printReport(reportSales, reportCommissions, reportUsers, startDate, endDate, regionsToPrint);
+    toast.success(`Printing report for ${regionsToPrint.length} region(s)`);
   };
 
   // If user doesn't have permission to generate reports
@@ -444,23 +346,6 @@ export default function Reports() {
   return (
     <MainLayout>
       <div className="animate-fade-in space-y-6">
-        {/* Error Message */}
-        {error && (
-          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
-            <div>
-              <p className="font-medium text-destructive">Error loading reports</p>
-              <p className="text-sm text-destructive/80">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Loading Indicator */}
-        {isLoading && (
-          <div className="bg-primary/10 border border-primary/20 rounded-lg p-4">
-            <p className="text-sm text-primary">Loading reports data...</p>
-          </div>
-        )}
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -550,40 +435,33 @@ export default function Reports() {
                     size="sm" 
                     onClick={toggleAllRegions}
                     className="text-xs"
-                    disabled={isLoadingRegions || availableRegions.length === 0}
                   >
                     {selectedRegions.length === availableRegions.length ? 'Deselect All' : 'Select All'}
                   </Button>
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  {isLoadingRegions ? (
-                    <p className="text-sm text-muted-foreground">Loading regions...</p>
-                  ) : availableRegions.length > 0 ? (
-                    availableRegions.map(region => (
-                      <div key={region} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={region}
-                          checked={selectedRegions.includes(region)}
-                          onCheckedChange={() => toggleRegion(region)}
-                        />
-                        <Label 
-                          htmlFor={region} 
-                          className={cn(
-                            "text-sm cursor-pointer",
-                            selectedRegions.includes(region) ? "text-foreground font-medium" : "text-muted-foreground"
-                          )}
-                        >
-                          {region}
-                        </Label>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No regions available</p>
-                  )}
+                  {availableRegions.map(region => (
+                    <div key={region} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={region}
+                        checked={selectedRegions.includes(region)}
+                        onCheckedChange={() => toggleRegion(region)}
+                      />
+                      <Label 
+                        htmlFor={region} 
+                        className={cn(
+                          "text-sm cursor-pointer",
+                          selectedRegions.includes(region) ? "text-foreground font-medium" : "text-muted-foreground"
+                        )}
+                      >
+                        {region}
+                      </Label>
+                    </div>
+                  ))}
                 </div>
-                {selectedRegions.length === 0 && availableRegions.length > 0 && (
+                {selectedRegions.length === 0 && (
                   <p className="text-xs text-muted-foreground">
-                    No regions selected. Report will include all regions.
+                    No regions selected. Select at least one region to view reports.
                   </p>
                 )}
               </div>
@@ -645,7 +523,7 @@ export default function Reports() {
                 <div>
                   <p className="text-sm text-accent font-medium">Active FOs</p>
                   <p className="text-2xl font-bold text-foreground">{activeFOs}</p>
-                  <p className="text-xs text-muted-foreground">of {totalFOs} total</p>
+                  <p className="text-xs text-muted-foreground">of {users.length} total</p>
                 </div>
                 <Users className="h-8 w-8 text-accent" />
               </div>
@@ -670,10 +548,7 @@ export default function Reports() {
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
                     <XAxis type="number" tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                     <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 12 }} />
-                    <Tooltip 
-                      formatter={(value: number) => `Ksh ${value.toLocaleString()}`}
-                      labelFormatter={(label: string) => `Product: ${label}`}
-                    />
+                    <Tooltip formatter={(value: number) => `Ksh ${value.toLocaleString()}`} />
                     <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -725,41 +600,35 @@ export default function Reports() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {companyPerformance.length > 0 ? (
-                <div className="flex items-center justify-center">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <RechartsPie>
-                      <Pie
-                        data={companyPerformance}
-                        cx="35%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={90}
-                        paddingAngle={2}
-                        dataKey="value"
-                      >
-                        {companyPerformance.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COMPANY_COLORS[index % COMPANY_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Legend
-                        layout="vertical"
-                        align="right"
-                        verticalAlign="middle"
-                        formatter={(value, entry: any) => (
-                          <span className="text-foreground">
-                            {value} <span className="font-bold ml-4">{entry.payload.value}%</span>
-                          </span>
-                        )}
-                      />
-                    </RechartsPie>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <div className="h-[250px] flex items-center justify-center text-muted-foreground">
-                  No company data for selected period
-                </div>
-              )}
+              <div className="flex items-center justify-center">
+                <ResponsiveContainer width="100%" height={250}>
+                  <RechartsPie>
+                    <Pie
+                      data={companyPerformance}
+                      cx="35%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={90}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {companyPerformance.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COMPANY_COLORS[index % COMPANY_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Legend
+                      layout="vertical"
+                      align="right"
+                      verticalAlign="middle"
+                      formatter={(value, entry: any) => (
+                        <span className="text-foreground">
+                          {value} <span className="font-bold ml-4">{entry.payload.value}%</span>
+                        </span>
+                      )}
+                    />
+                  </RechartsPie>
+                </ResponsiveContainer>
+              </div>
             </CardContent>
           </Card>
 

@@ -26,6 +26,8 @@ export default function ManageFOs() {
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [assignTargetTL, setAssignTargetTL] = useState<User | null>(null);
   const [selectedFOIdsForAssign, setSelectedFOIdsForAssign] = useState<string[]>([]);
+  const [isAutoAssigning, setIsAutoAssigning] = useState(false);
+  const prevUserIdsRef = React.useRef<Set<string>>(new Set());
 
   // Load team leaders and field officers from API on mount
   useEffect(() => {
@@ -35,50 +37,71 @@ export default function ManageFOs() {
         return;
       }
 
+      const parseUsersResponse = (res: any) => {
+        if (!res) return [];
+        let users: any[] = [];
+        if (Array.isArray(res)) users = res;
+        else if (res.data && Array.isArray(res.data.users)) users = res.data.users;
+        else if (res.data && Array.isArray(res.data)) users = res.data;
+        else if (res.users && Array.isArray(res.users)) users = res.users;
+        
+        // Normalize field names (_id to id, team_leader_id to teamLeaderId)
+        return users.map(u => ({
+          ...u,
+          id: u.id || u._id,
+          teamLeaderId: u.teamLeaderId || u.team_leader_id
+        }));
+      };
+
       try {
         setPageLoading(true);
         console.log('📥 Loading team data for region:', currentUser.region, 'RM ID:', currentUser.id);
 
-        // Fetch all team leaders in the region
-        const tlResponse = await userService.getAll({ role: 'team_leader', region: currentUser.region });
-        console.log('✅ TL Response received:', tlResponse);
-        
-        // Correctly parse the response - it returns { success, data: { users: [], total } }
-        let teamLeaders = (tlResponse as any)?.data?.users || [];
-        teamLeaders = Array.isArray(teamLeaders) ? teamLeaders : [];
-        console.log('📊 Parsed Team Leaders:', teamLeaders.length, 'records');
+        // Fetch team leaders and FOs (API may return different shapes)
+        const tlRaw = await userService.getAll({ role: 'team_leader', region: currentUser.region });
+        const foRaw = await userService.getAll({ role: 'field_officer', region: currentUser.region });
 
-        // Fetch all field officers in the region
-        const foResponse = await userService.getAll({ role: 'field_officer', region: currentUser.region });
-        console.log('✅ FO Response received:', foResponse);
-        
-        // Correctly parse the response - it returns { success, data: { users: [], total } }
-        let fieldOfficers = (foResponse as any)?.data?.users || [];
-        fieldOfficers = Array.isArray(fieldOfficers) ? fieldOfficers : [];
+        let teamLeaders = parseUsersResponse(tlRaw);
+        let fieldOfficers = parseUsersResponse(foRaw);
+
+        console.log('📊 Parsed Team Leaders:', teamLeaders.length, 'records');
         console.log('📊 Parsed Field Officers:', fieldOfficers.length, 'records');
 
-        // Always set the state with fetched data
+        // Fallback: if role-filtered endpoints are empty, fetch all users in region and split by role
+        if (teamLeaders.length === 0 && fieldOfficers.length === 0) {
+          try {
+            console.log('🔁 Role-filtered endpoints empty — fetching all users for region as fallback');
+            const allRaw = await userService.getAll({ region: currentUser.region });
+            const allUsers = parseUsersResponse(allRaw);
+            teamLeaders = allUsers.filter((u: any) => u.role === 'team_leader');
+            fieldOfficers = allUsers.filter((u: any) => u.role === 'field_officer');
+            console.log('🔍 Fallback split — TLs:', teamLeaders.length, 'FOs:', fieldOfficers.length);
+          } catch (fbErr) {
+            console.warn('Fallback fetch failed:', fbErr);
+          }
+        }
+
+        // Update states
         setApiTeamLeaders(teamLeaders);
         setApiFieldOfficers(fieldOfficers);
 
-        // Update global users context as well for persistence
+        // Merge into global users context for persistence (only if we actually fetched users)
         const allUsers = [...teamLeaders, ...fieldOfficers];
         if (allUsers.length > 0) {
           setUsers(prev => {
-            // Merge with existing users to avoid losing other roles
-            const existingNonRegional = prev.filter(u => u.region !== currentUser.region || (u.role !== 'team_leader' && u.role !== 'field_officer'));
+            const prevArr = Array.isArray(prev) ? prev : [];
+            const existingNonRegional = prevArr.filter(u => u.region !== currentUser.region || (u.role !== 'team_leader' && u.role !== 'field_officer'));
             return [...existingNonRegional, ...allUsers];
           });
         }
-        console.log('🔄 Context updated with', allUsers.length, 'users');
       } catch (error: any) {
         console.error('❌ Error loading team data:', error);
         console.error('Error details:', error?.response?.data || error?.message);
-        
+
         // Try to use context data as fallback
         const contextTeamLeaders = users.filter(u => u.role === 'team_leader' && u.region === currentUser.region);
         const contextFOs = users.filter(u => u.role === 'field_officer' && u.region === currentUser.region);
-        
+
         if (contextTeamLeaders.length > 0 || contextFOs.length > 0) {
           console.log('📦 Using fallback context data:', contextTeamLeaders.length, 'TLs,', contextFOs.length, 'FOs');
           setApiTeamLeaders(contextTeamLeaders);
@@ -93,7 +116,56 @@ export default function ManageFOs() {
     };
 
     loadTeamData();
-  }, [currentUser?.id, currentUser?.region, setUsers, users]);
+  }, [currentUser?.id, currentUser?.region]);
+
+  // Auto-assign newly added FOs (when logged in as a Team Leader)
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'team_leader') {
+      // keep prev set in sync
+      prevUserIdsRef.current = new Set((users || []).map(u => u.id));
+      return;
+    }
+
+    const prevIds = prevUserIdsRef.current || new Set<string>();
+    const nowIds = new Set((users || []).map(u => u.id));
+    const newUserIds: string[] = [];
+    for (const id of nowIds) {
+      if (!prevIds.has(id)) newUserIds.push(id);
+    }
+
+    // Update prev set immediately to avoid re-processing
+    prevUserIdsRef.current = nowIds;
+
+    // Find newly added FOs in same region with no teamLeaderId
+    const newlyAddedFOs = users.filter(u => newUserIds.includes(u.id) && u.role === 'field_officer' && u.region === currentUser.region && !u.teamLeaderId);
+    if (newlyAddedFOs.length === 0) return;
+
+    const assign = async () => {
+      setIsAutoAssigning(true);
+      try {
+        for (const fo of newlyAddedFOs) {
+          if (!fo || !fo.id) {
+            console.warn('Auto-assign: skipping FO with missing id', fo);
+            continue;
+          }
+          try {
+            const resp = await userService.assignTeamLeader(fo.id, currentUser.id);
+            if (resp.success && resp.data) {
+              const updated = resp.data as User;
+              setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+              setApiFieldOfficers(prev => prev.map(u => u.id === updated.id ? updated : u));
+            }
+          } catch (err) {
+            console.error('Auto-assign FO error', err);
+          }
+        }
+      } finally {
+        setIsAutoAssigning(false);
+      }
+    };
+
+    assign();
+  }, [users, currentUser, setUsers]);
 
   // Get team leaders in my region (use API data if available, otherwise context)
   const myTeamLeaders = useMemo(() => {
@@ -117,7 +189,9 @@ export default function ManageFOs() {
     }
     
     if (currentUser.role === 'team_leader') {
-      return users.filter(u => u.role === 'field_officer' && u.teamLeaderId === currentUser.id);
+      // Show all FOs in the same region as the team leader (not just those assigned to this TL)
+      // This allows team leaders to see and manage all FOs in their region
+      return users.filter(u => u.role === 'field_officer' && u.region === currentUser.region);
     }
     
     return [];
@@ -126,13 +200,15 @@ export default function ManageFOs() {
   // Get FO stats
   const foStats = useMemo(() => {
     return myFOs.map(fo => {
-      const foStock = imeis.filter(i => i.allocatedToFOId === fo.id && i.status === 'ALLOCATED');
-      const foSales = sales.filter(s => s.createdBy === fo.id);
-      const foCommissions = commissions.filter(c => c.foId === fo.id);
+      const foId = fo.id;
+      const foStock = imeis.filter(i => i.allocatedToFOId === foId && i.status === 'ALLOCATED');
+      const foSales = sales.filter(s => s.createdBy === foId);
+      const foCommissions = commissions.filter(c => c.foId === foId);
       const teamLeader = users.find(u => u.id === fo.teamLeaderId);
       
       return {
         ...fo,
+        id: foId, // Ensure id is always set
         teamLeaderName: teamLeader?.name || 'Unassigned',
         stockCount: foStock.length,
         salesCount: foSales.length,
@@ -144,54 +220,107 @@ export default function ManageFOs() {
 
   const handleReassign = (fo: User) => {
     setSelectedFO(fo);
-    setNewTeamLeaderId('');
+    // Default the new team leader to the first available TL (API-loaded or context)
+    const defaultTL = myTeamLeaders.length > 0 ? myTeamLeaders[0] : (apiTeamLeaders.length > 0 ? apiTeamLeaders[0] : null);
+    setNewTeamLeaderId(defaultTL?.id || '');
     setReassignDialogOpen(true);
   };
 
   const confirmReassign = async () => {
-    if (!selectedFO || !newTeamLeaderId) return;
+    if (!selectedFO || !newTeamLeaderId) {
+      toast.error('Please select a team leader');
+      return;
+    }
+
+    if (!selectedFO.id) {
+      console.error('confirmReassign: selectedFO missing id', selectedFO);
+      toast.error('Cannot reassign: missing field officer id');
+      return;
+    }
 
     setIsLoading(true);
     try {
       // Get the new team leader info for display
       const newTeamLeader = [...myTeamLeaders, ...apiTeamLeaders].find(u => u.id === newTeamLeaderId);
 
+      console.log('📤 Reassigning FO:', selectedFO.name, 'to TL:', newTeamLeader?.name);
+      console.log('📤 FO ID:', selectedFO.id, 'TL ID:', newTeamLeaderId);
+
       // Always make API call to ensure database persistence
       const response = await userService.assignTeamLeader(selectedFO.id, newTeamLeaderId);
       
+      console.log('✅ API Response:', response);
+      console.log('✅ Response Data:', response?.data);
+
       if (response.success && response.data) {
         // Update local state with the returned data
-        const updatedFO = response.data as User;
+        let updatedFO = response.data as User;
         
+        // Normalize field names in case API returns different names
+        updatedFO = {
+          ...updatedFO,
+          id: updatedFO.id || (updatedFO as any)._id,
+          teamLeaderId: updatedFO.teamLeaderId || (updatedFO as any).team_leader_id
+        };
+        
+        console.log('📝 Updated FO after normalization:', updatedFO);
+        console.log('📝 Updated FO teamLeaderId:', updatedFO.teamLeaderId);
+
         // Update context users
-        setUsers(prev => prev.map(u => 
-          u.id === selectedFO.id ? updatedFO : u
-        ));
+        setUsers(prev => {
+          const updated = prev.map(u => 
+            u.id === selectedFO.id ? updatedFO : u
+          );
+          console.log('🔄 Updated global users context');
+          return updated;
+        });
 
         // Update local state arrays
-        setApiFieldOfficers(prev => prev.map(u =>
-          u.id === selectedFO.id ? updatedFO : u
-        ));
+        setApiFieldOfficers(prev => {
+          const updated = prev.map(u =>
+            u.id === selectedFO.id ? updatedFO : u
+          );
+          console.log('🔄 Updated apiFieldOfficers');
+          return updated;
+        });
 
         // Log the activity
         logActivity('user', 'FO Reassigned', 
           `Reassigned ${selectedFO.name} to ${newTeamLeader?.name || 'Unassigned'}'s team`
         );
         
-        toast.success(`${selectedFO.name} has been reassigned to ${newTeamLeader?.name}'s team`);
+        toast.success(`✅ ${selectedFO.name} has been reassigned to ${newTeamLeader?.name}'s team`);
+
+        // Close dialog and reset state
+        setReassignDialogOpen(false);
+        setSelectedFO(null);
+        setNewTeamLeaderId('');
       } else {
-        throw new Error(response.message || 'Failed to reassign field officer');
+        const errorMsg = (response as any).message || 'Failed to reassign field officer';
+        console.error('❌ Reassignment failed:', errorMsg);
+        throw new Error(errorMsg);
       }
     } catch (error: any) {
       console.error('Error reassigning FO:', error);
-      toast.error(error?.message || 'Failed to reassign field officer. Please try again.');
+      const errorMsg = error?.message || error?.response?.data?.message || 'Failed to reassign field officer. Please try again.';
+      toast.error(errorMsg);
     } finally {
       setIsLoading(false);
-      setReassignDialogOpen(false);
-      setSelectedFO(null);
-      setNewTeamLeaderId('');
     }
   };
+
+    // When bulk assign dialog opens, default the target TL to the first TL available
+    // and pre-select all available FOs not already assigned to that TL
+    useEffect(() => {
+      if (!bulkAssignOpen) return;
+      if (assignTargetTL) return;
+      const defaultTL = myTeamLeaders.length > 0 ? myTeamLeaders[0] : (apiTeamLeaders.length > 0 ? apiTeamLeaders[0] : null);
+      if (defaultTL) {
+        setAssignTargetTL(defaultTL);
+        const available = users.filter(u => u.role === 'field_officer' && u.region === currentUser?.region && u.teamLeaderId !== defaultTL.id);
+        setSelectedFOIdsForAssign(available.map(u => u.id));
+      }
+    }, [bulkAssignOpen, myTeamLeaders, apiTeamLeaders, assignTargetTL, users, currentUser?.region]);
 
   if (!currentUser || (currentUser.role !== 'regional_manager' && currentUser.role !== 'team_leader')) {
     return (
@@ -293,13 +422,22 @@ export default function ManageFOs() {
                         <span className="text-sm text-muted-foreground">Field Officers</span>
                         <div className="flex items-center gap-2">
                           <Badge variant="secondary">{tlFOs.length}</Badge>
-                          <Button size="xs" variant="ghost" onClick={() => {
-                            setAssignTargetTL(tl);
-                            setSelectedFOIdsForAssign([]);
-                            setBulkAssignOpen(true);
-                          }}>
-                            Assign FOs
-                          </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => {
+                                    setAssignTargetTL(tl);
+                                    setSelectedFOIdsForAssign([]);
+                                    setBulkAssignOpen(true);
+                                  }}>
+                                    Assign FOs
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => {
+                                    // Preselect all available FOs in region that are not already assigned to this TL
+                                    const available = users.filter(u => u.role === 'field_officer' && u.region === currentUser?.region && u.teamLeaderId !== tl.id);
+                                    setAssignTargetTL(tl);
+                                    setSelectedFOIdsForAssign(available.map(u => u.id));
+                                    setBulkAssignOpen(true);
+                                  }}>
+                                    Assign All
+                                  </Button>
                         </div>
                       </div>
                     </CardContent>
@@ -337,7 +475,11 @@ export default function ManageFOs() {
                     <TableCell>
                       <Badge variant="outline">{fo.foCode}</Badge>
                     </TableCell>
-                    <TableCell>{fo.teamLeaderName}</TableCell>
+                    <TableCell>
+                      <Badge variant={fo.teamLeaderName === 'Unassigned' ? 'destructive' : 'default'}>
+                        {fo.teamLeaderName}
+                      </Badge>
+                    </TableCell>
                     <TableCell>{fo.stockCount}</TableCell>
                     <TableCell>{fo.salesCount}</TableCell>
                     <TableCell>KES {fo.totalRevenue.toLocaleString()}</TableCell>
@@ -381,7 +523,7 @@ export default function ManageFOs() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>New Team Leader</Label>
+                  <Label htmlFor="team-leader-select">New Team Leader</Label>
                   <p className="text-xs text-muted-foreground mb-3">
                     Select a team leader. One TL can manage multiple FOs.
                   </p>
@@ -393,8 +535,15 @@ export default function ManageFOs() {
                     </div>
                   ) : (
                     <>
-                      <Select value={newTeamLeaderId} onValueChange={setNewTeamLeaderId}>
-                        <SelectTrigger>
+                      <Select value={newTeamLeaderId ?? ''} onValueChange={(value) => {
+                        if (value === undefined || value === null) {
+                          console.warn('onValueChange received invalid value:', value);
+                          return;
+                        }
+                        console.log('🔄 Team leader selected:', value);
+                        setNewTeamLeaderId(value);
+                      }}>
+                        <SelectTrigger id="team-leader-select">
                           <SelectValue placeholder="Select team leader..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -402,6 +551,10 @@ export default function ManageFOs() {
                             <div className="p-2 text-sm text-muted-foreground">No team leaders available</div>
                           ) : (
                             myTeamLeaders.map(tl => {
+                              if (!tl.id) {
+                                console.warn('SelectItem: skipping team leader with missing id', tl);
+                                return null;
+                              }
                               const tlFOCount = myFOs.filter(fo => fo.teamLeaderId === tl.id).length;
                               const isCurrent = tl.id === selectedFO.teamLeaderId;
                               return (
@@ -436,16 +589,25 @@ export default function ManageFOs() {
               </div>
             )}
             <DialogFooter>
-              <Button variant="outline" onClick={() => setReassignDialogOpen(false)} disabled={isLoading}>
+              <Button variant="outline" onClick={() => {
+                setReassignDialogOpen(false);
+                setSelectedFO(null);
+                setNewTeamLeaderId('');
+              }} disabled={isLoading}>
                 Cancel
               </Button>
-              <Button onClick={confirmReassign} disabled={!newTeamLeaderId || isLoading}>
+              <Button 
+                onClick={confirmReassign} 
+                disabled={!newTeamLeaderId || isLoading}
+                className={newTeamLeaderId && !isLoading ? 'bg-blue-600 hover:bg-blue-700' : ''}
+              >
                 <ArrowRightLeft className="h-4 w-4 mr-1" />
                 {isLoading ? 'Reassigning...' : 'Confirm Reassignment'}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+    
         {/* Bulk Assign Dialog */}
         <Dialog open={bulkAssignOpen} onOpenChange={(open) => { if(!open){ setAssignTargetTL(null); setSelectedFOIdsForAssign([]); } setBulkAssignOpen(open); }}>
           <DialogContent>
@@ -499,11 +661,26 @@ export default function ManageFOs() {
                 try {
                   // Assign each FO via API and update context
                   for (const foId of selectedFOIdsForAssign) {
-                    const resp = await userService.assignTeamLeader(foId, assignTargetTL.id);
-                    if (resp.success && resp.data) {
-                      const updated = resp.data as User;
-                      setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
-                      setApiFieldOfficers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                    if (!foId) {
+                      console.warn('Bulk assign: skipping invalid FO id', foId);
+                      continue;
+                    }
+                    try {
+                      const resp = await userService.assignTeamLeader(foId, assignTargetTL.id);
+                      if (resp.success && resp.data) {
+                        let updated = resp.data as User;
+                        // Normalize field names in case API returns different names
+                        updated = {
+                          ...updated,
+                          id: updated.id || (updated as any)._id,
+                          teamLeaderId: updated.teamLeaderId || (updated as any).team_leader_id
+                        };
+                        setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                        setApiFieldOfficers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                        console.log('✅ Bulk assign: Updated FO', updated.name, 'with teamLeaderId:', updated.teamLeaderId);
+                      }
+                    } catch (err) {
+                      console.error('Bulk assign API error for FO id', foId, err);
                     }
                   }
                   toast.success(`Assigned ${selectedFOIdsForAssign.length} FO(s) to ${assignTargetTL.name}`);

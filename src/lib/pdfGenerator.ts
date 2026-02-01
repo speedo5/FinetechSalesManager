@@ -252,8 +252,24 @@ export function exportToCSV<T extends Record<string, any>>(
 }
 
 export function exportCommissions(commissions: Commission[]): void {
-  exportToCSV(commissions, 'commissions-report', [
-    { key: 'foName', header: 'Field Officer' },
+  // Transform commissions to include all necessary fields with proper formatting
+  const transformedData = commissions.map(c => ({
+    ...c,
+    // Ensure field names are properly set
+    userName: c.userName || c.foName || 'N/A',
+    role: c.role || 'field_officer',
+    productName: c.productName || 'N/A',
+    imei: c.imei || 'N/A',
+    saleId: c.saleId || 'N/A',
+    amount: c.amount || 0,
+    status: c.status || 'pending',
+    createdAt: c.createdAt ? new Date(c.createdAt).toISOString() : new Date().toISOString(),
+  }));
+
+  exportToCSV(transformedData, 'commissions-report', [
+    { key: 'userName', header: 'Recipient Name' },
+    { key: 'role', header: 'Role' },
+    { key: 'productName', header: 'Product' },
     { key: 'saleId', header: 'Sale ID' },
     { key: 'imei', header: 'IMEI' },
     { key: 'amount', header: 'Amount (Ksh)' },

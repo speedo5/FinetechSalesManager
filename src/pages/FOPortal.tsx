@@ -18,6 +18,7 @@ import { salesService } from '@/services/salesService';
 import { imeiService } from '@/services/imeiService';
 import { inventoryService } from '@/services/inventoryService';
 import { productService } from '@/services/productService';
+import { commissionService } from '@/services/commissionService';
 
 interface FOPortalProps {
   onSaleComplete?: () => void;
@@ -161,7 +162,70 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
     };
 
     loadAllocatedImeis();
-  }, [currentUser?.id, currentUser?.role, products, setImeis]);
+  }, [currentUser?.id, currentUser?.role]);
+
+  // Load FO sales history, IMEIs, and commissions on mount (persistent fetch so data survives refresh)
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const loadFOSales = async () => {
+      try {
+        const res = await salesService.getAll({ foId: currentUser.id });
+        const fetchedSales = Array.isArray(res) ? res : (res as any)?.data || (res as any)?.sales || [];
+        if (fetchedSales && fetchedSales.length >= 0) {
+          setSales(fetchedSales);
+        }
+      } catch (err) {
+        console.error('Error loading FO sales:', err);
+      }
+    };
+
+    const loadFOImeis = async () => {
+      try {
+        const res = await imeiService.getAll({ currentHolderId: currentUser.id });
+        const fetchedImeis = Array.isArray(res) ? res : (res as any)?.data || (res as any)?.imeis || [];
+        if (Array.isArray(fetchedImeis)) {
+          // Merge into context imeis without duplicating
+          setImeis(prev => {
+            const existing = Array.isArray(prev) ? prev : [];
+            const existingSet = new Set(existing.map(i => i.imei));
+            const newItems = fetchedImeis.filter((it: any) => it?.imei && !existingSet.has(it.imei));
+            return [...existing, ...newItems];
+          });
+        }
+      } catch (err) {
+        console.error('Error loading FO IMEIs:', err);
+      }
+    };
+
+    const loadFOCommissions = async () => {
+      try {
+        const res = await commissionService.getAll({ userId: currentUser.id });
+        let fetchedCommissions: any[] = [];
+        if (Array.isArray(res)) {
+          fetchedCommissions = res;
+        } else if ((res as any)?.data) {
+          if (Array.isArray((res as any).data)) {
+            fetchedCommissions = (res as any).data;
+          } else if ((res.data as any).data && Array.isArray((res.data as any).data)) {
+            fetchedCommissions = (res.data as any).data;
+          } else if ((res as any).data.commissions && Array.isArray((res as any).data.commissions)) {
+            fetchedCommissions = (res as any).data.commissions;
+          }
+        }
+        if (fetchedCommissions && fetchedCommissions.length >= 0) {
+          setCommissions(fetchedCommissions);
+        }
+      } catch (err) {
+        console.error('Error loading FO commissions:', err);
+      }
+    };
+
+    // Load all data in parallel without awaiting to prevent blocking render
+    loadFOSales();
+    loadFOImeis();
+    loadFOCommissions();
+  }, [currentUser?.id]);
 
   // Generate proper FO Code format
   const getFOCode = () => {
@@ -273,14 +337,16 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
 
   // Calculate sale amount with proper fallbacks
   let saleAmount = 0;
-  if (selectedImeiData?.sellingPrice) {
+  if (selectedImeiData?.sellingPrice && selectedImeiData.sellingPrice > 0) {
     saleAmount = selectedImeiData.sellingPrice;
-  } else if (selectedImeiFromApi?.sellingPrice) {
+  } else if (selectedImeiFromApi?.sellingPrice && selectedImeiFromApi.sellingPrice > 0) {
     saleAmount = selectedImeiFromApi.sellingPrice;
-  } else if (selectedImeiFromApi?.price) {
+  } else if (selectedImeiFromApi?.price && selectedImeiFromApi.price > 0) {
     saleAmount = selectedImeiFromApi.price;
-  } else if (product?.price) {
-    saleAmount = (product.price || 0) * quantity;
+  } else if (product?.price && product.price > 0) {
+    saleAmount = product.price * Math.max(quantity, 1);
+  } else {
+    saleAmount = 0;
   }
   
   const commission = selectedImeiData?.commission || selectedImeiFromApi?.commissionConfig?.foCommission || 0;
@@ -293,7 +359,7 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
     const allAllocatedForProduct = combinedImeis.filter(i => {
       const productMatch = i.productId === selectedProduct;
       const isAllocated = uniqueAllocatedImeis.includes(i.imei);
-      const isNotSold = i.status !== 'SOLD' && i.status !== 'SOLD';
+      const isNotSold = i.status !== 'SOLD';
 
       const match = productMatch && isAllocated && isNotSold;
       if (!match && productMatch && uniqueAllocatedImeis.length > 0) {
@@ -330,12 +396,83 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
       return false;
     }
     
+    // Remove redundant check for SOLD status
+    const isNotSold = selectedImeiData?.status !== 'SOLD' && selectedImeiFromApi?.status !== 'SOLD';
+    
     return true;
   };
+
+  // --- FO Dashboard metrics ---
+  const foSales = (sales || []).filter(s => {
+    const saleAny = s as any;
+    const foId = saleAny.foId || saleAny.fo?.id || saleAny.fo;
+    return foId === currentUser?.id;
+  });
+
+  const getSaleAmount = (s: any) => (s as any).totalAmount ?? (s as any).amount ?? (s as any).saleAmount ?? 0;
+
+  const totalSalesCount = foSales.length;
+  const totalSalesValue = foSales.reduce((sum, s) => sum + (getSaleAmount(s) || 0), 0);
+
+  const isSameDay = (dateA: Date, dateB: Date) => {
+    return dateA.getFullYear() === dateB.getFullYear() && dateA.getMonth() === dateB.getMonth() && dateA.getDate() === dateB.getDate();
+  };
+
+  const today = new Date();
+  const todaysSales = foSales.filter(s => {
+    const saleAny = s as any;
+    const d = saleAny.createdAt ? new Date(saleAny.createdAt) : saleAny.date ? new Date(saleAny.date) : null;
+    return d ? isSameDay(d, today) : false;
+  });
+  const todaysSalesCount = todaysSales.length;
+  const todaysSalesValue = todaysSales.reduce((sum, s) => sum + (getSaleAmount(s) || 0), 0);
+
+  // Pending commissions: sum of sale commission fields or fallback to commissionCalc
+  const pendingCommissions = foSales.reduce((sum, s) => {
+    const saleAny = s as any;
+    const c = saleAny.commissionAmount ?? saleAny.commission ?? saleAny.foCommission ?? 0;
+    const paid = saleAny.commissionPaid === true || saleAny.commissionStatus === 'paid';
+    return sum + (paid ? 0 : (c || 0));
+  }, 0);
+
+  // Available stock for FO (unique allocated IMEIs mapped to product counts)
+  const availableImeisForFO = combinedImeis.filter(i => uniqueAllocatedImeis.includes(i.imei) && i.status !== 'SOLD');
+  const availableStockCount = availableImeisForFO.length;
+
+  // Top products sold by FO
+  const productSalesCount: Record<string, number> = {};
+  foSales.forEach(s => {
+    // Try to derive product id from sale: supports single-item sales or items array
+    const saleAny = s as any;
+    const prodId = saleAny.productId || (saleAny.items && saleAny.items[0] && (saleAny.items[0].productId || saleAny.items[0].product)) || null;
+    const pid = typeof prodId === 'object' ? (prodId._id || prodId.id) : prodId;
+    if (!pid) return;
+    productSalesCount[pid] = (productSalesCount[pid] || 0) + 1;
+  });
+
+  const topProducts = Object.entries(productSalesCount)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([pid, count]) => ({ product: products.find(p => p.id === pid || (p as any)._id === pid) || { id: pid, name: 'Unknown' }, count }));
+
+  const recentSales = foSales
+    .slice()
+    .sort((a: any, b: any) => {
+      const aDate = new Date((a as any).createdAt || (a as any).date || 0);
+      const bDate = new Date((b as any).createdAt || (b as any).date || 0);
+      return bDate.getTime() - aDate.getTime();
+    })
+    .slice(0, 6);
 
   const completeSale = async () => {
     if (!canCompleteSale() || !product) {
       toast({ title: 'Error', description: 'Please fill all required fields', variant: 'destructive' });
+      return;
+    }
+
+    // Validate FO is logged in
+    if (!currentUser?.id) {
+      toast({ title: 'Error', description: 'You must be logged in as a Field Officer to complete a sale', variant: 'destructive' });
       return;
     }
 
@@ -346,7 +483,7 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
         return;
       }
 
-      if (!selectedImeiData) {
+      if (!selectedImeiData && !selectedImeiFromApi) {
         console.error('Selected IMEI not found in imeis:', {
           selectedImei,
           loadedImeis: imeis.map(i => ({ imei: i.imei, id: i.id })),
@@ -357,7 +494,7 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
     }
 
     // For phones, get IMEI ID; for accessories, imeiId is optional
-    const imeiId = isPhone ? (selectedImeiData?.id || selectedImei) : undefined;
+    const imeiId = isPhone ? (selectedImeiData?.id || selectedImeiFromApi?.id || selectedImei) : undefined;
     
     if (isPhone && !imeiId) {
       toast({ title: 'Error', description: 'Cannot determine IMEI ID. Please select another phone.', variant: 'destructive' });
@@ -403,14 +540,19 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
       // Create sale via API - matching POS approach
       const createdSaleRes = await salesService.create(saleData);
       
-      if (!createdSaleRes?.data) {
-        throw new Error('Failed to create sale');
+      if (!createdSaleRes || (!createdSaleRes.data && !Array.isArray(createdSaleRes))) {
+        console.error('Invalid sale response:', createdSaleRes);
+        throw new Error('Invalid response from server. Sale may not have been recorded.');
       }
 
-      const createdSale = createdSaleRes.data;
+      // Extract the Sale object from response
+      const createdSale = (createdSaleRes as any).data ? (createdSaleRes as any).data : createdSaleRes;
+      if (!createdSale || typeof createdSale !== 'object') {
+        throw new Error('Invalid sale data received from server');
+      }
 
-      // Update local sales list
-      setSales([...sales, createdSale]);
+      // Update local sales list with the actual Sale object
+      setSales(prev => [...(prev || []), createdSale]);
 
       // Refresh IMEIs data to reflect updated status (like POS does)
       if (isPhone && selectedImei) {
@@ -428,12 +570,20 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
             }
           }
           
-          setImeis(updatedImeis);
-        } catch (refreshError) {
-          console.error('Error refreshing IMEIs:', refreshError);
-          // Don't fail the entire sale if refresh fails
-        }
-      }
+          // Ensure we set an array and merge safely into context
+          if (Array.isArray(updatedImeis)) {
+            setImeis(prev => {
+              const existing = Array.isArray(prev) ? prev : [];
+              const existingSet = new Set(existing.map((i: any) => i.imei));
+              const newItems = updatedImeis.filter((it: any) => it?.imei && !existingSet.has(it.imei));
+              return [...existing, ...newItems];
+            });
+          }
+         } catch (refreshError) {
+           console.error('Error refreshing IMEIs:', refreshError);
+           // Don't fail the entire sale if refresh fails
+         }
+       }
 
       // Add notification
       addNotification({
@@ -500,6 +650,103 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
       </div>
 
       <div className="grid gap-6">
+        {/* FO Dashboard summary cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          <Card className="border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm"><Receipt className="h-4 w-4 text-primary"/> Total Sales</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{totalSalesCount}</div>
+              <div className="text-sm text-muted-foreground">Ksh {totalSalesValue.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+
+          <Card className="border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm"><CheckCircle className="h-4 w-4 text-primary"/> Today's Sales</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{todaysSalesCount}</div>
+              <div className="text-sm text-muted-foreground">Ksh {todaysSalesValue.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+
+          <Card className="border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm"><Building2 className="h-4 w-4 text-primary"/> Pending Commissions</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">Ksh {pendingCommissions.toLocaleString()}</div>
+              <div className="text-sm text-muted-foreground">Unpaid commissions</div>
+            </CardContent>
+          </Card>
+
+          <Card className="border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm"><Smartphone className="h-4 w-4 text-primary"/> Available Stock</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{availableStockCount}</div>
+              <div className="text-sm text-muted-foreground">Allocated IMEIs</div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Recent sales and top products */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card className="border">
+            <CardHeader>
+              <CardTitle>Recent Sales</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {recentSales.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No recent sales</div>
+              ) : (
+                <div className="space-y-2">
+                  {recentSales.map((s: any) => {
+                    const amt = getSaleAmount(s);
+                    const when = s.createdAt ? new Date(s.createdAt) : s.date ? new Date(s.date) : null;
+                    const prodId = s.productId || (s.items && s.items[0] && (s.items[0].productId || s.items[0].product)) || null;
+                    const pid = typeof prodId === 'object' ? (prodId._id || prodId.id) : prodId;
+                    const prod = products.find(p => p.id === pid || (p as any)._id === pid);
+                    return (
+                      <div key={s.id || s._id} className="flex items-center justify-between">
+                        <div>
+                          <div className="font-medium">{prod ? prod.name : (s.productName || 'Sale')}</div>
+                          <div className="text-xs text-muted-foreground">{when ? when.toLocaleString() : '—'}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-semibold">Ksh {amt.toLocaleString()}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border">
+            <CardHeader>
+              <CardTitle>Top Products</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {topProducts.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No sales data</div>
+              ) : (
+                <div className="space-y-2">
+                  {topProducts.map(tp => (
+                    <div key={(tp.product as any).id} className="flex items-center justify-between">
+                      <div className="font-medium">{(tp.product as any).name}</div>
+                      <div className="text-sm text-muted-foreground">{tp.count} sold</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
         {/* Product Selection */}
         <Card className="border shadow-sm">
           <CardHeader>
@@ -522,6 +769,8 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
                     ).length;
                     
                     // Debug logging
+                    const inStockCount = combinedImeis.filter(i => i.productId === prod.id && i.status !== 'SOLD').length; // Define inStockCount
+                    const allocatedCount = combinedImeis.filter(i => i.productId === prod.id && uniqueAllocatedImeis.includes(i.imei)).length; // Define allocatedCount
                     if (availableCount === 0 && apiAllocatedImeis.length > 0) {
                       console.log('Product:', prod.name, '(ID:', prod.id, ') - InStock:', inStockCount, 'Allocated:', allocatedCount);
                       console.log('Matching IMEIs:', imeis.filter(i => i.productId === prod.id).map(i => ({ imei: i.imei, status: i.status })));
