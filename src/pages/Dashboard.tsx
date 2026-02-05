@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { RevenueChart, SalesPieChart } from '@/components/dashboard/Charts';
@@ -21,6 +22,30 @@ import {
 
 export default function Dashboard() {
   const { currentUser, sales, users, products, commissions, imeis } = useApp();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Redirect users to their role-specific default page when they land on root
+  useEffect(() => {
+    if (!currentUser) return;
+    // Only auto-redirect when on the root dashboard path
+    if (location.pathname && location.pathname !== '/') return;
+
+    switch (currentUser.role) {
+      case 'regional_manager':
+        navigate('/regional', { replace: true });
+        break;
+      case 'team_leader':
+        navigate('/team-leader', { replace: true });
+        break;
+      case 'field_officer':
+        navigate('/fo', { replace: true });
+        break;
+      default:
+        // admin and others stay on the admin dashboard
+        break;
+    }
+  }, [currentUser, location.pathname, navigate]);
   
   // State for API data
   const [stats, setStats] = useState<MappedDashboardStats | null>(null);
@@ -153,15 +178,27 @@ export default function Dashboard() {
           parsedRecent = (salesDataRaw as any).data || (salesDataRaw as any).sales || [];
         }
 
+        // Enrich recent sales with seller names from users array
+        const enrichRecentSales = (salesList: any[]) => {
+          return salesList.map(sale => {
+            const userId = sale.createdBy || sale.foId;
+            const user = users.find(u => u.id === userId);
+            return {
+              ...sale,
+              sellerName: sale.sellerName || sale.foName || user?.name || 'Unknown',
+            };
+          });
+        };
+
         if (Array.isArray(parsedRecent) && parsedRecent.length > 0) {
-          setRecentSales(parsedRecent.slice(0, 5));
+          setRecentSales(enrichRecentSales(parsedRecent.slice(0, 5)));
         } else {
           // Fallback: Use sales from context (most reliable)
           const recentFromContext = (Array.isArray(sales) ? sales : [])
             .slice()
             .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
             .slice(0, 5);
-          setRecentSales(recentFromContext);
+          setRecentSales(enrichRecentSales(recentFromContext));
         }
       } catch (error) {
         toast.error('Failed to load dashboard data');
@@ -226,7 +263,15 @@ export default function Dashboard() {
         const recentFromContext = sales
           .slice()
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          .slice(0, 5);
+          .slice(0, 5)
+          .map(sale => {
+            const userId = sale.createdBy || sale.foId;
+            const user = users.find(u => u.id === userId);
+            return {
+              ...sale,
+              sellerName: sale.sellerName || sale.foName || user?.name || 'Unknown',
+            };
+          });
         setRecentSales(recentFromContext);
       } finally {
         setIsLoading(false);
@@ -465,7 +510,7 @@ export default function Dashboard() {
                       <div className="flex-1">
                         <p className="font-medium text-foreground">{sale.productName}</p>
                         <p className="text-sm text-muted-foreground">
-                          {sale.foName || sale.createdByName || 'Unknown'} • {sale.imei ? `IMEI: ${sale.imei.slice(-6)}` : 'Accessory'}
+                          {sale.sellerName} • {sale.imei ? `IMEI: ${sale.imei.slice(-6)}` : 'Accessory'}
                         </p>
                       </div>
                       <div className="text-right">

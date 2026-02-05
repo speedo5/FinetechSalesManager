@@ -1,15 +1,23 @@
 import { useApp } from '@/context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Receipt, Clock, Download } from 'lucide-react';
+import { Receipt, Clock, Download, Eye } from 'lucide-react';
 import { generateSaleReceipt, exportSales } from '@/lib/pdfGenerator';
 import { useEffect, useState } from 'react';
 import { salesService } from '@/services/salesService';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 
 export default function FOSalesHistory() {
   const { sales, setSales, currentUser } = useApp();
   const [foSalesData, setFoSalesData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [previewSale, setPreviewSale] = useState<any | null>(null);
 
   // Load FO sales on component mount
   useEffect(() => {
@@ -131,9 +139,10 @@ export default function FOSalesHistory() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => generateSaleReceipt(sale)}
+                            onClick={() => setPreviewSale(sale)}
+                            title="Preview receipt"
                           >
-                            <Download className="h-4 w-4" />
+                            <Eye className="h-4 w-4" />
                           </Button>
                         </td>
                       </tr>
@@ -145,6 +154,74 @@ export default function FOSalesHistory() {
           </CardContent>
         </Card>
       )}
+
+      {/* Receipt Preview Modal */}
+      <Dialog open={previewSale !== null} onOpenChange={(open) => !open && setPreviewSale(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Receipt Preview</DialogTitle>
+          </DialogHeader>
+          
+          {previewSale && (
+            <div className="bg-white p-6 rounded-lg border font-mono text-sm space-y-4">
+              {/* Header */}
+              <div className="text-center border-b pb-4">
+                <h3 className="font-bold text-lg">RECEIPT</h3>
+                <p className="text-xs text-muted-foreground">Receipt #{previewSale.etrReceiptNo || previewSale.receiptNo}</p>
+                <p className="text-xs text-muted-foreground">
+                  {previewSale.createdAt ? new Date(previewSale.createdAt).toLocaleDateString() : ''}
+                </p>
+              </div>
+
+              {/* Product Details */}
+              <div className="border-b pb-4">
+                <h4 className="font-bold text-xs mb-2">Product Details:</h4>
+                <div className="space-y-2 text-xs">
+                  <div>
+                    <span className="font-semibold">Product:</span> {previewSale.productName}
+                  </div>
+                  {previewSale.imei && (
+                    <div>
+                      <span className="font-semibold">IMEI:</span> {previewSale.imei}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Payment Info */}
+              <div className="border-b pb-4 space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="font-semibold">Payment Method:</span>
+                  <span className="uppercase">{previewSale.paymentMethod || 'Cash'}</span>
+                </div>
+                {previewSale.paymentReference && (
+                  <div className="flex justify-between">
+                    <span className="font-semibold">Ref:</span>
+                    <span className="font-mono">{previewSale.paymentReference}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Total */}
+              <div className="text-center">
+                <p className="text-xs text-muted-foreground mb-1">Total Amount</p>
+                <p className="text-lg font-bold">Ksh {(previewSale.saleAmount || previewSale.totalAmount || previewSale.amount || 0).toLocaleString()}</p>
+              </div>
+
+              {/* Footer */}
+              <div className="text-center border-t pt-4 text-xs text-muted-foreground">
+                <p>Thank you for your sale!</p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPreviewSale(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

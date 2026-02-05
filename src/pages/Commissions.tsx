@@ -410,7 +410,7 @@ export default function Commissions() {
       key={summary.userId}
       className="flex items-center gap-4 p-4 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
     >
-      {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && summary.totalPending > 0 && (
+      {currentUser?.role === 'admin' && summary.totalPending > 0 && (
         <Checkbox
           checked={selectedUsers.has(summary.userId)}
           onCheckedChange={() => toggleUserSelection(summary.userId)}
@@ -446,7 +446,7 @@ export default function Commissions() {
           </p>
         )}
       </div>
-      {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && summary.totalPending > 0 && (
+      {currentUser?.role === 'admin' && summary.totalPending > 0 && (
         <Button 
           size="sm" 
           onClick={() => handlePayUser(summary.userId)}
@@ -489,7 +489,7 @@ export default function Commissions() {
                 <p className="text-lg font-bold text-warning">Ksh {totalPending.toLocaleString()}</p>
                 <p className="text-xs text-muted-foreground">pending</p>
               </div>
-              {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && (
+              {currentUser?.role === 'admin' && (
                 <Button 
                   size="sm" 
                   variant="outline"
@@ -796,7 +796,7 @@ export default function Commissions() {
             )}
 
             {/* Bulk Actions */}
-            {(currentUser?.role === 'admin' || currentUser?.role === 'regional_manager') && pendingUsersCount > 0 && (
+            {currentUser?.role === 'admin' && pendingUsersCount > 0 && (
               <Card className="border shadow-sm mb-4 bg-muted/30">
                 <CardContent className="p-4">
                   <div className="flex flex-wrap items-center justify-between gap-4">

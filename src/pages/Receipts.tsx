@@ -35,18 +35,18 @@ export default function Receipts() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [previewSale, setPreviewSale] = useState<any | null>(null);
 
-  // Get manager's region - Regional Managers only see their region's receipts
-  const managerRegion = currentUser?.role === 'regional_manager' ? currentUser?.region : null;
+  // Get manager's region - Regional Managers and Team Leaders only see their region's receipts
+  const managerRegion = (currentUser?.role === 'regional_manager' || currentUser?.role === 'team_leader') ? currentUser?.region : null;
 
-  // Filter field officers by region if user is Regional Manager
+  // Filter field officers by region if user is Regional Manager or Team Leader
   const fieldOfficers = users.filter(u => {
     if (u.role !== 'field_officer') return false;
     if (!managerRegion) return true; // Admin sees all
-    return u.region === managerRegion; // RM sees only their region's FOs
+    return u.region === managerRegion; // RM/TL sees only their region's FOs
   });
   
-  // Check if current user can print receipts (Admin or Regional Manager only)
-  const canPrintReceipt = currentUser?.role === 'admin' || currentUser?.role === 'regional_manager';
+  // Check if current user can print receipts (Admin, Regional Manager, or Team Leader)
+  const canPrintReceipt = currentUser?.role === 'admin' || currentUser?.role === 'regional_manager' || currentUser?.role === 'team_leader';
 
   // Fetch sales from API on component mount
   useEffect(() => {
@@ -351,22 +351,12 @@ export default function Receipts() {
                       <Button 
                         variant="outline" 
                         size="sm" 
-                        className="flex-1"
+                        className="w-full"
                         onClick={() => setPreviewSale(sale)}
                         title="Preview receipt"
                       >
                         <Eye className="h-4 w-4 mr-2" />
-                        Preview
-                      </Button>
-                      <Button 
-                        variant="default" 
-                        size="sm" 
-                        className="flex-1"
-                        disabled={isDownloading}
-                        onClick={() => handleDownloadReceipt(sale)}
-                      >
-                        <FileText className="h-4 w-4 mr-2" />
-                        {isDownloading ? 'Generating...' : 'Print'}
+                        View
                       </Button>
                     </div>
                   )}
@@ -443,24 +433,14 @@ export default function Receipts() {
                       </td>
                       <td className="font-bold text-success">Ksh {sale.saleAmount.toLocaleString()}</td>
                       {canPrintReceipt && (
-                        <td className="flex gap-2">
+                        <td>
                           <Button 
                             variant="ghost" 
                             size="sm" 
-                            disabled={isDownloading}
                             onClick={() => setPreviewSale(sale)}
                             title="Preview receipt"
                           >
                             <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            disabled={isDownloading}
-                            onClick={() => handleDownloadReceipt(sale)}
-                            title="Download receipt"
-                          >
-                            <FileText className="h-4 w-4" />
                           </Button>
                         </td>
                       )}

@@ -375,13 +375,20 @@ async function createCommissions(sale, imei, seller) {
     rmId = regionalManager?._id;
   }
   
+  // Avoid creating duplicate RM commission when the seller is the regional manager
   if (rmId && commissionConfig.regionalManagerCommission > 0) {
-    commissions.push({
-      saleId: sale._id,
-      userId: rmId,
-      role: USER_ROLES.REGIONAL_MANAGER,
-      amount: commissionConfig.regionalManagerCommission
-    });
+    const rmIdStr = rmId.toString ? rmId.toString() : String(rmId);
+    const sellerIdStr = seller._id ? seller._id.toString() : String(seller.id || seller._id);
+    if (rmIdStr !== sellerIdStr) {
+      commissions.push({
+        saleId: sale._id,
+        userId: rmId,
+        role: USER_ROLES.REGIONAL_MANAGER,
+        amount: commissionConfig.regionalManagerCommission
+      });
+    } else {
+      // Seller is already the regional manager; their commission was added above in the seller-role block.
+    }
   }
 
   if (commissions.length > 0) {

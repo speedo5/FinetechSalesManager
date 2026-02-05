@@ -30,7 +30,9 @@ export function WorkflowTracker({ currentUser, users, imeis, stockAllocations }:
       icon: <Building2 className="h-5 w-5" />,
       users: users.filter(u => u.role === 'admin'),
       stockCount: imeis.filter(i => {
-        const owner = users.find(u => u.id === i.currentOwnerId);
+        // Check both currentOwnerId and currentHolderId
+        const ownerId = i.currentOwnerId || (i as any).currentHolderId;
+        const owner = users.find(u => u.id === ownerId);
         return owner?.role === 'admin' && i.status !== 'SOLD';
       }).length,
       soldCount: 0,
@@ -42,7 +44,8 @@ export function WorkflowTracker({ currentUser, users, imeis, stockAllocations }:
       icon: <Users className="h-5 w-5" />,
       users: users.filter(u => u.role === 'regional_manager'),
       stockCount: imeis.filter(i => {
-        const owner = users.find(u => u.id === i.currentOwnerId);
+        const ownerId = i.currentOwnerId || (i as any).currentHolderId;
+        const owner = users.find(u => u.id === ownerId);
         return owner?.role === 'regional_manager' && i.status !== 'SOLD';
       }).length,
       soldCount: 0,
@@ -54,7 +57,8 @@ export function WorkflowTracker({ currentUser, users, imeis, stockAllocations }:
       icon: <UserCheck className="h-5 w-5" />,
       users: users.filter(u => u.role === 'team_leader'),
       stockCount: imeis.filter(i => {
-        const owner = users.find(u => u.id === i.currentOwnerId);
+        const ownerId = i.currentOwnerId || (i as any).currentHolderId;
+        const owner = users.find(u => u.id === ownerId);
         return owner?.role === 'team_leader' && i.status !== 'SOLD';
       }).length,
       soldCount: 0,
@@ -66,7 +70,8 @@ export function WorkflowTracker({ currentUser, users, imeis, stockAllocations }:
       icon: <User className="h-5 w-5" />,
       users: users.filter(u => u.role === 'field_officer'),
       stockCount: imeis.filter(i => {
-        const owner = users.find(u => u.id === i.currentOwnerId);
+        const ownerId = i.currentOwnerId || (i as any).currentHolderId;
+        const owner = users.find(u => u.id === ownerId);
         return owner?.role === 'field_officer' && i.status !== 'SOLD';
       }).length,
       soldCount: imeis.filter(i => {
@@ -85,9 +90,18 @@ export function WorkflowTracker({ currentUser, users, imeis, stockAllocations }:
   });
 
   const flowStats = {
-    adminToRM: recentAllocations.filter(a => a.fromRole === 'admin' && a.toRole === 'regional_manager').length,
-    rmToTL: recentAllocations.filter(a => a.fromRole === 'regional_manager' && a.toRole === 'team_leader').length,
-    tlToFO: recentAllocations.filter(a => a.fromRole === 'team_leader' && a.toRole === 'field_officer').length,
+    adminToRM: recentAllocations.filter(a => 
+      (a.fromRole === 'admin' || (a as any).fromRole === 'admin') && 
+      (a.toRole === 'regional_manager' || (a as any).toRole === 'regional_manager')
+    ).length,
+    rmToTL: recentAllocations.filter(a => 
+      (a.fromRole === 'regional_manager' || (a as any).fromRole === 'regional_manager') && 
+      (a.toRole === 'team_leader' || (a as any).toRole === 'team_leader')
+    ).length,
+    tlToFO: recentAllocations.filter(a => 
+      (a.fromRole === 'team_leader' || (a as any).fromRole === 'team_leader') && 
+      (a.toRole === 'field_officer' || (a as any).toRole === 'field_officer')
+    ).length,
   };
 
   return (

@@ -6,6 +6,7 @@ import { imeiService } from '@/services/imeiService';
 import { authService } from '@/services/authService';
 import { commissionService } from '@/services/commissionService';
 import { salesService } from '@/services/salesService';
+import { activityLogService } from '@/services/activityLogService';
 
 // ============================================================================
 // APP CONTEXT - Application State Management
@@ -177,7 +178,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       metadata,
       createdAt: new Date(),
     };
+    // Optimistically update local state so UI reflects the activity immediately
     setActivityLogs(prev => [newLog, ...prev]);
+
+    // Persist activity to backend (non-blocking). Map frontend fields to API payload.
+    (async () => {
+      try {
+        await activityLogService.create({
+          action,
+          entityType: type === 'inventory' ? 'imei' : (type === 'allocation' ? 'stock_allocation' : type),
+          details: {
+            description,
+            metadata: {
+              ...metadata,
+              performedBy: { id: currentUser.id, name: currentUser.name, email: currentUser.email },
+            }
+          }
+        });
+      } catch (err) {
+        // If persistence fails, log to console but keep local entry to avoid losing UX feedback
+        console.warn('Failed to persist activity log to server:', err);
+      }
+    })();
   };
 
   const allocateStock = (allocation: Omit<StockAllocation, 'id' | 'createdAt' | 'status'>): { success: boolean; error?: string } => {

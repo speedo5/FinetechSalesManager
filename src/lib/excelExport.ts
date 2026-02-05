@@ -226,16 +226,31 @@ const createInventorySheet = (
   rowIndex++;
   
   // Filter products by category and add data
-  const phones = products.filter((p: any) => p.category === 'phone' || !p.category);
+  // Normalize category checks to be case-insensitive and accept plural forms
+  const isPhoneCategory = (c: any) => {
+    if (!c) return true; // treat undefined as phone by previous behavior
+    const v = String(c).toLowerCase();
+    return v.includes('phone');
+  };
+  const isAccessoryCategory = (c: any) => {
+    if (!c) return false;
+    const v = String(c).toLowerCase();
+    return v.includes('accessor');
+  };
+
+  const phones = products.filter((p: any) => isPhoneCategory(p.category));
   phones.forEach((phone: any) => {
-    const availableImeis = imeis.filter((i: any) => i.productId === phone.id && i.status === 'IN_STOCK').length;
-    const totalValue = (phone.stockQuantity || 0) * (phone.unitPrice || 0);
-    
+    const availableImeis = imeis.filter((i: any) => i.productId === phone.id && String(i.status || '').toUpperCase() === 'IN_STOCK').length;
+    // If IMEIs exist for this product prefer IMEI count as the authoritative stock units
+    const units = availableImeis > 0 ? availableImeis : (Number(phone.stockQuantity || 0));
+    const unitPrice = Number(phone.unitPrice || 0);
+    const totalValue = units * unitPrice;
+
     XLSX.utils.sheet_add_aoa(ws, [[
       phone.name,
       phone.category || 'Phone',
-      phone.stockQuantity || 0,
-      phone.unitPrice || 0,
+      units,
+      unitPrice,
       availableImeis,
       totalValue,
     ]], { origin: { r: rowIndex, c: 0 } });
@@ -253,7 +268,7 @@ const createInventorySheet = (
   XLSX.utils.sheet_add_aoa(ws, [accessoryHeaders], { origin: { r: rowIndex, c: 0 } });
   rowIndex++;
   
-  const accessories = products.filter((p: any) => p.category === 'accessory');
+  const accessories = products.filter((p: any) => isAccessoryCategory(p.category));
   accessories.forEach((accessory: any) => {
     const totalValue = (accessory.stockQuantity || 0) * (accessory.unitPrice || 0);
     
@@ -274,11 +289,20 @@ const createInventorySheet = (
   XLSX.utils.sheet_add_aoa(ws, [['INVENTORY SUMMARY']], { origin: { r: rowIndex, c: 0 } });
   rowIndex++;
   
-  const totalPhoneStock = phones.reduce((sum: number, p: any) => sum + (p.stockQuantity || 0), 0);
-  const totalAccessoryStock = accessories.reduce((sum: number, a: any) => sum + (a.stockQuantity || 0), 0);
-  const totalImeiInStock = imeis.filter((i: any) => i.status === 'IN_STOCK').length;
-  const totalPhoneValue = phones.reduce((sum: number, p: any) => sum + ((p.stockQuantity || 0) * (p.unitPrice || 0)), 0);
-  const totalAccessoryValue = accessories.reduce((sum: number, a: any) => sum + ((a.stockQuantity || 0) * (a.unitPrice || 0)), 0);
+  // Compute totals. For phones prefer IMEI counts where available to avoid double-counting.
+  const totalImeiInStock = imeis.filter((i: any) => String(i.status || '').toUpperCase() === 'IN_STOCK').length;
+  const totalPhoneStock = phones.reduce((sum: number, p: any) => {
+    const imeiCount = imeis.filter((i: any) => i.productId === p.id && String(i.status || '').toUpperCase() === 'IN_STOCK').length;
+    return sum + (imeiCount > 0 ? imeiCount : (Number(p.stockQuantity || 0)));
+  }, 0);
+  const totalAccessoryStock = accessories.reduce((sum: number, a: any) => sum + (Number(a.stockQuantity || 0)), 0);
+
+  const totalPhoneValue = phones.reduce((sum: number, p: any) => {
+    const imeiCount = imeis.filter((i: any) => i.productId === p.id && String(i.status || '').toUpperCase() === 'IN_STOCK').length;
+    const units = imeiCount > 0 ? imeiCount : (Number(p.stockQuantity || 0));
+    return sum + units * (Number(p.unitPrice || 0));
+  }, 0);
+  const totalAccessoryValue = accessories.reduce((sum: number, a: any) => sum + (Number(a.stockQuantity || 0) * Number(a.unitPrice || 0)), 0);
   
   XLSX.utils.sheet_add_aoa(ws, [['Total Phone Units', totalPhoneStock]], { origin: { r: rowIndex, c: 0 } });
   rowIndex++;

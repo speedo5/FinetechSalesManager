@@ -71,139 +71,45 @@ export default function StockAllocation() {
         
         let transformedStock: IMEI[] = [];
 
-        // Load available stock for allocation from database
-        const stockResponse = await stockAllocationService.getAvailableStock();
-        if (stockResponse.success && stockResponse.data) {
-          const stock = Array.isArray(stockResponse.data) ? stockResponse.data : (stockResponse.data as any)?.data || [];
-          // Transform MongoDB IMEI documents to frontend format
-          transformedStock = stock.map((item: any) => {
-            const productId = typeof item.productId === 'object' ? item.productId._id : item.productId;
-            const productName = typeof item.productId === 'object' ? item.productId.name : item.productName;
-            
-            // Look up product to get selling price if not in item
-            const product = products.find(p => p.id === productId);
-            const sellingPrice = item.sellingPrice || product?.price || 0;
-            
-            // Look up allocation date from allocations we just loaded
-            const allocationRecord = allocations.find(alloc => alloc.imei === item.imei);
-            const allocatedAt = allocationRecord?.createdAt || item.allocatedAt;
-            
-            
-            return {
-              id: item._id || item.id,
-              imei: item.imei,
-              productId: productId,
-              productName: productName,
-              capacity: item.capacity,
-              status: item.status,
-              sellingPrice: sellingPrice,
-              commission: item.commission || 0,
-              source: item.source || 'watu',
-              registeredAt: item.registeredAt,
-              currentOwnerId: item.currentHolderId,
-              currentOwnerRole: item.currentOwnerRole,
-              allocatedAt: allocatedAt,
-            };
-          });
-          setLoadedImeis(transformedStock);
-          setImeis(transformedStock);
-        }
-
-        // Load in-stock inventory items that haven't been allocated yet
+        // Load ALL IMEIs (both allocated and unallocated) to get complete stock view
         try {
-          // Load ALL inventory items (no status filter) and filter by allocation status
-          console.log('Loading all inventory items...');
-          const inventoryResponse = await inventoryService.getAll();
-          console.log('Inventory Response:', inventoryResponse);
-          
-          if (inventoryResponse.success && inventoryResponse.data) {
-            // Handle different response formats from API
-            let inventoryItems: any[] = [];
+          const imeiResponse = await imeiService.getAll();
+          if (imeiResponse.success && imeiResponse.data) {
+            const imeiData = Array.isArray(imeiResponse.data) 
+              ? imeiResponse.data 
+              : (imeiResponse.data as any)?.imeis || (imeiResponse.data as any)?.data || [];
             
-            if (Array.isArray(inventoryResponse.data)) {
-              inventoryItems = inventoryResponse.data;
-            } else if ((inventoryResponse.data as any).imeis && Array.isArray((inventoryResponse.data as any).imeis)) {
-              inventoryItems = (inventoryResponse.data as any).imeis;
-            } else if ((inventoryResponse.data as any).data && Array.isArray((inventoryResponse.data as any).data)) {
-              inventoryItems = (inventoryResponse.data as any).data;
-            }
-            
-            // Filter out any null/undefined items
-            inventoryItems = inventoryItems.filter((item: any) => item != null);
-            
-            console.log('Total Inventory Items from API:', inventoryItems.length);
-            
-            // Filter to only unallocated items (no currentOwnerId/currentHolderId)
-            const unallocatedItems = inventoryItems.filter((item: any) => 
-              !item.currentHolderId && !item.currentOwnerId
-            );
-            
-            console.log('Unallocated Inventory Items:', unallocatedItems.length);
-            
-            // Transform and merge with allocated stock
-            const transformedInventory = unallocatedItems
-              .filter((item: any) => item != null) // Extra safety check
-              .map((item: any) => {
-                // Safe access to productId
-                const productId = item.productId && typeof item.productId === 'object' ? item.productId._id : item.productId;
-                const productName = item.productId && typeof item.productId === 'object' ? item.productId.name : item.productName;
-                
-                // Look up product to get selling price if not in item
-                const product = products.find(p => p.id === productId);
-                const sellingPrice = item.sellingPrice || product?.price || 0;
-                
-                console.log('Transforming unallocated item:', item.imei, 'Status:', item.status, 'Product:', productName || 'unknown', 'Price:', sellingPrice);
-                return {
-                  id: item._id || item.id,
-                  imei: item.imei,
-                  productId: productId,
-                  productName: productName,
-                  capacity: item.capacity,
-                  status: item.status || 'IN_STOCK',
-                  sellingPrice: sellingPrice,
-                  commission: item.commission || 0,
-                  source: item.source || 'watu',
-                  registeredAt: item.registeredAt,
-                  currentOwnerId: null,
-                  currentOwnerRole: item.currentOwnerRole,
-                  allocatedAt: item.allocatedAt,
-                };
-              })
-              .filter((item: any) => item && item.id && item.imei); // Remove any invalid items
-
-            console.log('Transformed Unallocated Inventory:', transformedInventory.length);
-
-            // Merge: Allocated stock + Unallocated inventory
-            const mergedStock = [...(transformedStock || [])];
-            const existingIds = new Set((transformedStock || []).map(s => s.id));
-            
-            transformedInventory.forEach(item => {
-              if (item && !existingIds.has(item.id)) {
-                console.log('Adding unallocated inventory item to stock:', item.imei);
-                mergedStock.push(item);
-              }
+            // Transform all IMEIs
+            transformedStock = imeiData.map((item: any) => {
+              const productId = typeof item.productId === 'object' ? item.productId._id : item.productId;
+              const productName = typeof item.productId === 'object' ? item.productId.name : item.productName;
+              
+              // Look up product to get selling price if not in item
+              const product = products.find(p => p.id === productId);
+              const sellingPrice = item.sellingPrice || product?.price || 0;
+              
+              return {
+                id: item._id || item.id,
+                imei: item.imei,
+                productId: productId,
+                productName: productName,
+                capacity: item.capacity,
+                status: item.status || 'IN_STOCK',
+                sellingPrice: sellingPrice,
+                commission: item.commission || 0,
+                source: item.source || 'watu',
+                registeredAt: item.registeredAt,
+                currentOwnerId: item.currentHolderId || item.currentOwnerId,
+                currentOwnerRole: item.currentOwnerRole,
+                soldBy: item.soldBy,
+                allocatedAt: item.allocatedAt,
+              };
             });
-
-            console.log('Final Merged Stock:', mergedStock.length);
-            console.log('Final Stock Items:', mergedStock.map(s => ({ imei: s.imei, product: s.productName, owner: s.currentOwnerId, price: s.sellingPrice })));
-            setLoadedImeis(mergedStock);
-            setImeis(mergedStock);
-          } else {
-            console.warn('Inventory response not successful:', inventoryResponse);
-            // If inventory fails, just use transformed stock
-            if (transformedStock.length > 0) {
-              setLoadedImeis(transformedStock);
-              setImeis(transformedStock);
-            }
-          }
-        } catch (invErr) {
-          console.error('Error loading inventory stock:', invErr);
-          // Continue with allocated stock if inventory fails
-          if (transformedStock.length > 0) {
-            console.log('Using only transformed stock:', transformedStock.length);
             setLoadedImeis(transformedStock);
             setImeis(transformedStock);
           }
+        } catch (imeiErr) {
+          console.error('Error loading IMEIs:', imeiErr);
         }
 
         // Load all users from API for role-based filtering
@@ -282,37 +188,46 @@ export default function StockAllocation() {
   // For FOs: only their allocated stock
   const myStock = useMemo(() => {
     if (!currentUser) return [];
-    
+
+    const normalizeOwnerId = (imei: any) => {
+      const ownerRef = imei.currentOwnerId || (imei as any).currentHolderId;
+      if (!ownerRef) return null;
+      if (typeof ownerRef === 'string') return ownerRef;
+      return ownerRef._id || ownerRef.id || null;
+    };
+
     console.log('Computing myStock for user:', currentUser.id, 'role:', currentUser.role, 'Total loadedImeis:', loadedImeis.length);
-    console.log('All loadedImeis:', loadedImeis.map(i => ({ imei: i.imei, product: i.productName, owner: i.currentOwnerId, status: i.status })));
-    
-    const ownedStock = loadedImeis.filter(imei => 
-      imei.currentOwnerId === currentUser.id && 
-      imei.status !== 'SOLD' && 
-      imei.status !== 'LOCKED'
-    );
-    
+    console.log('All loadedImeis:', loadedImeis.map(i => ({ imei: i.imei, product: i.productName, owner: normalizeOwnerId(i), status: i.status })));
+
+    const ownedStock = loadedImeis.filter(imei => {
+      const ownerId = normalizeOwnerId(imei);
+      const statusUpper = imei.status ? imei.status.toUpperCase() : 'IN_STOCK';
+      return ownerId === currentUser.id && statusUpper !== 'SOLD' && statusUpper !== 'LOCKED';
+    });
+
     console.log('Owned stock items:', ownedStock.length, ownedStock.map(i => ({ imei: i.imei, product: i.productName })));
 
     // For admin only: also include unallocated inventory
     // Regional managers, team leaders, and field officers only see their allocated stock
     if (currentUser.role === 'admin') {
       const unallocatedStock = loadedImeis.filter(imei => {
-        const isUnallocated = !imei.currentOwnerId; // Works for both null and undefined
+        const ownerId = normalizeOwnerId(imei);
+        const isUnallocated = !ownerId; // Works for both null and undefined
         // Check status - make case-insensitive and accept any unallocated status
         const statusUpper = imei.status ? imei.status.toUpperCase() : 'IN_STOCK';
         const validStatus = statusUpper === 'IN_STOCK' || statusUpper === 'ALLOCATED' || !imei.status;
         const isValid = isUnallocated && validStatus;
-        
+
         console.log('Checking item:', imei.imei, {
           currentOwnerId: imei.currentOwnerId,
+          ownerId,
           isUnallocated,
           status: imei.status,
           statusUpper,
           validStatus,
           isValid
         });
-        
+
         return isValid;
       });
       console.log('Unallocated stock items:', unallocatedStock.length, unallocatedStock.map(i => ({ imei: i.imei, product: i.productName })));
@@ -968,9 +883,9 @@ export default function StockAllocation() {
         {/* Workflow Pipeline Tracker */}
         <WorkflowTracker 
           currentUser={currentUser}
-          users={users}
-          imeis={imeis}
-          stockAllocations={stockAllocations}
+          users={loadedUsers}
+          imeis={loadedImeis}
+          stockAllocations={loadedAllocations}
         />
 
         {/* Stats Cards */}

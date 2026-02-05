@@ -145,12 +145,25 @@ export default function Reports() {
     loadReportsData();
   }, [currentUser?.id]);
   
-  // Use loaded data from API, fall back to context
-  const reportSales = loadedSales.length > 0 ? loadedSales : sales;
-  const reportCommissions = loadedCommissions.length > 0 ? loadedCommissions : commissions;
-  const reportUsers = loadedUsers.length > 0 ? loadedUsers : users;
-  const reportProducts = loadedProducts.length > 0 ? loadedProducts : products;
-  const reportImeis = loadedImeis.length > 0 ? loadedImeis : imeis;
+  // Merge API-loaded data with realtime context data so updates reflect immediately.
+  const mergeArraysById = (apiArr: any[], ctxArr: any[]) => {
+    const map = new Map<string, any>();
+    (apiArr || []).forEach(item => {
+      const id = item?.id ?? item?._id;
+      if (id) map.set(id.toString(), item);
+    });
+    (ctxArr || []).forEach(item => {
+      const id = item?.id ?? item?._id;
+      if (id) map.set(id.toString(), item);
+    });
+    return Array.from(map.values());
+  };
+
+  const reportSales = mergeArraysById(loadedSales, sales);
+  const reportCommissions = mergeArraysById(loadedCommissions, commissions);
+  const reportUsers = mergeArraysById(loadedUsers, users);
+  const reportProducts = mergeArraysById(loadedProducts, products);
+  const reportImeis = mergeArraysById(loadedImeis, imeis);
   
   // Use registered regions or fallback to all regions from data
   const availableRegions = registeredRegions.length > 0 ? registeredRegions : 
@@ -286,27 +299,40 @@ export default function Reports() {
     .sort((a, b) => b.sales - a.sales)
     .slice(0, 5);
 
-  // Company performance breakdown (Watu/Mogo/Onfon)
+  // Company performance breakdown (computed from filtered sales revenue)
+  const companyTotals = {
+    watu: 0,
+    mogo: 0,
+    onfon: 0,
+  };
+  filteredSales.forEach((s: any) => {
+    const src = (s.source || '').toString().toLowerCase();
+    if (src === 'watu') companyTotals.watu += Number(s.saleAmount || 0);
+    else if (src === 'mogo') companyTotals.mogo += Number(s.saleAmount || 0);
+    else if (src === 'onfon') companyTotals.onfon += Number(s.saleAmount || 0);
+  });
+  const companyTotalSum = companyTotals.watu + companyTotals.mogo + companyTotals.onfon || 0;
   const companyPerformance = [
-    { name: 'Watu', value: 45 },
-    { name: 'Mogo', value: 35 },
-    { name: 'Onfon', value: 20 },
+    { name: 'Watu', value: companyTotalSum > 0 ? Math.round((companyTotals.watu / companyTotalSum) * 100) : 0 },
+    { name: 'Mogo', value: companyTotalSum > 0 ? Math.round((companyTotals.mogo / companyTotalSum) * 100) : 0 },
+    { name: 'Onfon', value: companyTotalSum > 0 ? Math.round((companyTotals.onfon / companyTotalSum) * 100) : 0 },
   ];
 
   const COMPANY_COLORS = ['#10b981', '#8b5cf6', '#f97316'];
 
-  // Inventory summary
+  // Inventory summary (computed from merged products and IMEIs)
   const totalProducts = reportProducts.length;
-  const totalStock = reportProducts.reduce((sum, p) => sum + p.stockQuantity, 0) + reportImeis.filter(i => i.status === 'IN_STOCK').length;
-  const lowStockItems = reportProducts.filter(p => p.stockQuantity < 10 && p.category === 'accessory').length +
-    reportProducts.filter(p => {
-      const available = reportImeis.filter(i => i.productId === p.id && i.status === 'IN_STOCK').length;
-      return p.category === 'phone' && available < 5;
-    }).length;
+  const imeisInStock = reportImeis.filter(i => (i.status || '').toString().toUpperCase() === 'IN_STOCK').length;
+  const productStockSum = reportProducts.reduce((sum, p) => sum + (Number(p.stockQuantity || 0)), 0);
+  const totalStock = productStockSum + imeisInStock;
+
+  const lowStockItems = reportProducts.filter(p => (p.category === 'accessory' && (Number(p.stockQuantity || 0) < 10)) ||
+    (p.category === 'phone' && reportImeis.filter(i => i.productId === p.id && (i.status || '').toString().toUpperCase() === 'IN_STOCK').length < 5)
+  ).length;
 
   const categoryBreakdown = [
-    { name: 'Phones', count: reportImeis.filter(i => i.status === 'IN_STOCK').length },
-    { name: 'Accessories', count: reportProducts.filter(p => p.category === 'accessory').reduce((sum, p) => sum + p.stockQuantity, 0) },
+    { name: 'Phones', count: imeisInStock },
+    { name: 'Accessories', count: reportProducts.filter(p => p.category === 'accessory').reduce((sum, p) => sum + (Number(p.stockQuantity || 0)), 0) },
   ];
 
   // Handle export to Excel

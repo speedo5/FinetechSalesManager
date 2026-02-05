@@ -135,8 +135,19 @@ const TeamLeaderDashboard = () => {
   // FO Performance data
   const foPerformance = myFOs.map((fo: any) => {
     const foSales = teamSales.filter(s => s.createdBy === fo.id || s.createdBy === fo._id);
-    const foComms = teamCommissions.filter(c => c.userId === fo.id || c.userId === fo._id || c.foId === fo.id || c.foId === fo._id);
+    const foComms = teamCommissions.filter(c => {
+      const foId = fo.id || fo._id;
+      const commUserId = c.userId || c.foId;
+      return foId && commUserId && (commUserId === foId || String(commUserId) === String(foId));
+    });
     const foId = fo.id || fo._id || fo.name; // Ensure unique identifier
+    
+    console.log(`FO: ${fo.name} (${foId})`, {
+      salesCount: foSales.length,
+      commissionsCount: foComms.length,
+      commissions: foComms.map((c: any) => ({ userId: c.userId, foId: c.foId, amount: c.amount }))
+    });
+    
     return {
       ...fo,
       id: foId, // Ensure id field is always set
