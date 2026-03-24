@@ -14,9 +14,14 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:8080', 'http://localhost:3000'],
+<<<<<<< HEAD
+  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:8080', 'https://finetechmediaretailflowsuite.onrender.com/','http://localhost:3000','https://finetechmedia.co.ke'],
+=======
+  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:8080','https://finetechmediaretailflowsuite.onrender.com/', 'http://localhost:3000','https://finetechmedia.co.ke'],
+>>>>>>> ede3688e3636d8d0ca676d7a15017ccd12d7c04b
   credentials: true
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
