@@ -7,10 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import logo from '@/assets/logo.png';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useNavigate } from 'react-router-dom';
 
 export function LoginPage() {
   const { login } = useApp();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -38,6 +40,8 @@ export function LoginPage() {
           title: 'Welcome back!',
           description: 'Login successful',
         });
+        // Redirect to dashboard after successful login
+        navigate('/', { replace: true });
       } else {
         toast({
           title: 'Login Failed',
@@ -55,11 +59,7 @@ export function LoginPage() {
       <div className="w-full max-w-md animate-fade-in">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center mb-4">
-            <div className="h-16 w-16 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-2xl shadow-lg">
-              FM
-            </div>
-          </div>
+
           <h1 className="text-2xl font-heading font-bold text-foreground">Finetech Media</h1>
           <p className="text-muted-foreground mt-1">Operations Management System</p>
         </div>
@@ -120,18 +120,7 @@ export function LoginPage() {
               </Button>
             </form>
 
-            {/* Demo Credentials */}
-            <div className="mt-6 p-4 rounded-lg bg-muted/50 border border-border">
-              <p className="text-sm font-medium text-foreground mb-2">Demo Credentials:</p>
-              <div className="space-y-1 text-sm text-muted-foreground">
-                <p>
-                  <span className="text-primary font-medium">Admin:</span> admin@finetech.co.ke / qerty123
-                </p>
-                <p>
-                  <span className="text-success font-medium">FO:</span> peter@finetech.co.ke / fo123
-                </p>
-              </div>
-            </div>
+          
           </CardContent>
         </Card>
 

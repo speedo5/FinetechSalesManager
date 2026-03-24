@@ -46,11 +46,18 @@ export default function ManageFOs() {
         else if (res.users && Array.isArray(res.users)) users = res.users;
         
         // Normalize field names (_id to id, team_leader_id to teamLeaderId)
-        return users.map(u => ({
-          ...u,
-          id: u.id || u._id,
-          teamLeaderId: u.teamLeaderId || u.team_leader_id
-        }));
+        return users.map(u => {
+          // Handle both cases: teamLeaderId as object (populated) or as string (ID)
+          const tlId = typeof u.teamLeaderId === 'object' 
+            ? u.teamLeaderId?._id || u.teamLeaderId?.id
+            : (u.teamLeaderId || u.team_leader_id);
+            
+          return {
+            ...u,
+            id: u.id || u._id,
+            teamLeaderId: tlId // Ensure we extract the ID if it's a populated object
+          };
+        });
       };
 
       try {
@@ -66,6 +73,12 @@ export default function ManageFOs() {
 
         console.log('📊 Parsed Team Leaders:', teamLeaders.length, 'records');
         console.log('📊 Parsed Field Officers:', fieldOfficers.length, 'records');
+        
+        // Debug: Log the first FO to check if teamLeaderId is being properly set
+        if (fieldOfficers.length > 0) {
+          console.log('🔍 First FO data:', fieldOfficers[0]);
+          console.log('🔍 First FO teamLeaderId:', fieldOfficers[0].teamLeaderId);
+        }
 
         // Fallback: if role-filtered endpoints are empty, fetch all users in region and split by role
         if (teamLeaders.length === 0 && fieldOfficers.length === 0) {
@@ -189,9 +202,13 @@ export default function ManageFOs() {
     }
     
     if (currentUser.role === 'team_leader') {
-      // Show all FOs in the same region as the team leader (not just those assigned to this TL)
-      // This allows team leaders to see and manage all FOs in their region
-      return users.filter(u => u.role === 'field_officer' && u.region === currentUser.region);
+      // Show only FOs assigned to this team leader
+      const filteredFOs = users.filter(u => u.role === 'field_officer' && u.region === currentUser.region && u.teamLeaderId === currentUser.id);
+      // If no FOs in context, try apiFieldOfficers
+      if (filteredFOs.length === 0 && apiFieldOfficers.length > 0) {
+        return apiFieldOfficers.filter(u => u.teamLeaderId === currentUser.id);
+      }
+      return filteredFOs;
     }
     
     return [];
@@ -204,7 +221,12 @@ export default function ManageFOs() {
       const foStock = imeis.filter(i => i.allocatedToFOId === foId && i.status === 'ALLOCATED');
       const foSales = sales.filter(s => s.createdBy === foId);
       const foCommissions = commissions.filter(c => c.foId === foId);
-      const teamLeader = users.find(u => u.id === fo.teamLeaderId);
+      
+      // Look for team leader in both users array and apiTeamLeaders array
+      const teamLeader = users.find(u => u.id === fo.teamLeaderId) || 
+                        apiTeamLeaders.find(u => u.id === fo.teamLeaderId);
+      
+      console.log(`📊 FO ${fo.name} (ID: ${foId}, TeamLeaderID: ${fo.teamLeaderId}) -> TL Name: ${teamLeader?.name || 'Unassigned'}`);
       
       return {
         ...fo,
@@ -216,7 +238,7 @@ export default function ManageFOs() {
         totalCommissions: foCommissions.reduce((sum, c) => sum + c.amount, 0),
       };
     });
-  }, [myFOs, imeis, sales, commissions, users]);
+  }, [myFOs, imeis, sales, commissions, users, apiTeamLeaders]);
 
   const handleReassign = (fo: User) => {
     setSelectedFO(fo);

@@ -20,12 +20,16 @@ import {
   DollarSign,
   Phone,
   Building2,
-  RotateCcw
+  RotateCcw,
+  Package,
+  ShoppingCart
 } from 'lucide-react';
 import { PhoneSource } from '@/types';
 import { salesService } from '@/services/salesService';
 import { userService } from '@/services/userService';
 import { commissionService } from '@/services/commissionService';
+import * as stockAllocationService from '@/services/stockAllocationService';
+import { imeiService } from '@/services/imeiService';
 import { toast } from 'sonner';
 
 export default function RegionalDashboard() {
@@ -38,6 +42,8 @@ export default function RegionalDashboard() {
   const [loadedUsers, setLoadedUsers] = useState<any[]>([]);
   const [loadedSales, setLoadedSales] = useState<any[]>([]);
   const [loadedCommissions, setLoadedCommissions] = useState<any[]>([]);
+  const [loadedImeis, setLoadedImeis] = useState<any[]>([]);
+  const [allocatedStock, setAllocatedStock] = useState<any[]>([]);
 
   // Get current regional manager's region
   const myRegion = currentUser?.region;
@@ -69,6 +75,30 @@ export default function RegionalDashboard() {
         if (commissionsResponse.success && commissionsResponse.data) {
           const commissions = Array.isArray(commissionsResponse.data) ? commissionsResponse.data : (commissionsResponse.data as any)?.data || [];
           setLoadedCommissions(commissions);
+        }
+        
+        // Load allocated stock (current holder view) for the Regional Manager
+        try {
+          const stockResp = await stockAllocationService.getAvailableStock();
+          if (stockResp && stockResp.success && stockResp.data) {
+            const stock = Array.isArray(stockResp.data) ? stockResp.data : (stockResp.data as any)?.data || [];
+            // API returns IMEI records whose `currentHolderId` is the current user for non-admins.
+            // Set directly so items moved to TL (whose currentHolderId changes) will not appear here.
+            setAllocatedStock(stock);
+          }
+        } catch (err) {
+          console.error('Error loading allocated stock:', err);
+        }
+
+        // Load IMEIs to get source information
+        try {
+          const imeisResponse = await imeiService.getAll();
+          if (imeisResponse && imeisResponse.success && imeisResponse.data) {
+            const imeis = Array.isArray(imeisResponse.data) ? imeisResponse.data : (imeisResponse.data as any)?.data || [];
+            setLoadedImeis(imeis);
+          }
+        } catch (err) {
+          console.error('Error loading IMEIs:', err);
         }
       } catch (error) {
         console.error('Failed to load regional dashboard data:', error);
@@ -213,6 +243,14 @@ export default function RegionalDashboard() {
                   if (usersRes.success && usersRes.data) setLoadedUsers(Array.isArray(usersRes.data) ? usersRes.data : (usersRes.data as any)?.data || []);
                   if (salesRes.success && salesRes.data) setLoadedSales(Array.isArray(salesRes.data) ? salesRes.data : (salesRes.data as any)?.data || []);
                   if (commissionsRes.success && commissionsRes.data) setLoadedCommissions(Array.isArray(commissionsRes.data) ? commissionsRes.data : (commissionsRes.data as any)?.data || []);
+                  // Refresh allocated stock
+                  stockAllocationService.getAvailableStock().then((allocResponse) => {
+                    if (allocResponse.success && allocResponse.data) {
+                      const stock = Array.isArray(allocResponse.data) ? allocResponse.data : (allocResponse.data as any)?.data || [];
+                      const rmAllocated = stock.filter((item: any) => item.currentHolderId === currentUser?.id || item.currentOwnerId === currentUser?.id);
+                      setAllocatedStock(rmAllocated);
+                    }
+                  });
                   toast.success('Dashboard refreshed');
                 }).catch(() => {
                   toast.error('Failed to refresh dashboard');
@@ -280,6 +318,90 @@ export default function RegionalDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Allocated Stock */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-blue-500" />
+              My Allocated Stock
+              <Badge variant="outline" className="ml-auto">
+                {allocatedStock.length} items
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {allocatedStock.length === 0 ? (
+              <div className="text-center py-8">
+                <ShoppingCart className="h-12 w-12 mx-auto mb-3 opacity-50 text-muted-foreground" />
+                <p className="text-muted-foreground">No stock allocated to you yet.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Object.entries(allocatedStock.reduce((groupedByProduct: any, item: any) => {
+                  const productName = typeof item.productId === 'object' ? item.productId.name : item.productName;
+                  if (!groupedByProduct[productName]) {
+                    groupedByProduct[productName] = [];
+                  }
+                  groupedByProduct[productName].push(item);
+                  return groupedByProduct;
+                }, {})).map(([productName, items]: [string, any[]]) => {
+                  // Calculate total value using product price or fallback price
+                  const totalValue = items.reduce((sum, item) => {
+                    const price = typeof item.productId === 'object' && item.productId.price 
+                      ? item.productId.price 
+                      : item.sellingPrice || 0;
+                    return sum + price;
+                  }, 0);
+
+                  // Get unique sources from all items by looking up IMEIs
+                  const uniqueSources = Array.from(new Set(
+                    items
+                      .map((item: any) => {
+                        // Try to get source from the imeiId directly if it's an object
+                        if (typeof item.imeiId === 'object' && item.imeiId?.source) {
+                          return item.imeiId.source;
+                        }
+                        // Try to find the IMEI in loadedImeis to get its source
+                        const imeiId = typeof item.imeiId === 'string' ? item.imeiId : (typeof item.imeiId === 'object' ? item.imeiId?._id : null);
+                        const imeiRecord = loadedImeis.find((i: any) => i.id === imeiId || i._id === imeiId);
+                        return imeiRecord?.source || item.source;
+                      })
+                      .filter((s: any) => s)
+                  ));
+
+                  return (
+                    <div key={productName} className="p-4 rounded-lg border border-border bg-muted/20">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <p className="font-semibold text-foreground">{productName}</p>
+                          <p className="text-sm text-muted-foreground">{items.length} units</p>
+                        </div>
+                        <Badge variant="default">{items.length}</Badge>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Total Value</span>
+                          <span className="font-medium">Ksh {totalValue.toLocaleString()}</span>
+                        </div>
+                        {uniqueSources.length > 0 && (
+                          <div className="flex justify-between items-center gap-2">
+                            <span className="text-muted-foreground">Source{uniqueSources.length > 1 ? 's' : ''}</span>
+                            <div className="flex flex-wrap gap-1 justify-end">
+                              {uniqueSources.map((source: any) => (
+                                <Badge key={source} variant="outline" className="capitalize">{source}</Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Company-wise Sales */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">

@@ -69,9 +69,9 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    if (response.token) {
-      setAuthToken(response.token);
-    }
+    // Server returns token inside `data.token` while older clients expected `token` at top-level.
+    const token = (response as any).token || (response as any).data?.token;
+    if (token) setAuthToken(token);
     return response;
   },
 
@@ -548,11 +548,11 @@ export const dashboardApi = {
   },
 
   getTopSellers: async (limit: number = 10) => {
-    return apiFetch<{ success: boolean; data: any[] }>(`/dashboard/top-sellers?limit=${limit}`);
+    return apiFetch<{ success: boolean; data: any[] }>(`/dashboard/top-performers?limit=${limit}`);
   },
 
   getRegionStats: async () => {
-    return apiFetch<{ success: boolean; data: any[] }>('/dashboard/region-stats');
+    return apiFetch<{ success: boolean; data: any[] }>('/dashboard/regional-stats');
   },
 };
 

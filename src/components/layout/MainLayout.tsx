@@ -1,6 +1,7 @@
 import { ReactNode, useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { NotificationBell } from './NotificationBell';
+import { NavLink } from '@/components/NavLink';
 import { useApp } from '@/context/AppContext';
 import { LoginPage } from '@/pages/LoginPage';
 import { Menu, X } from 'lucide-react';
@@ -11,9 +12,22 @@ interface MainLayoutProps {
 }
 
 export function MainLayout({ children }: MainLayoutProps) {
-  const { currentUser } = useApp();
+  const { currentUser, isSessionLoading } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Show loading spinner while session is being restored
+  if (isSessionLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-12 w-12 rounded-full border-4 border-muted border-t-primary animate-spin" />
+          <p className="text-muted-foreground">Restoring session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login page if user is not authenticated
   if (!currentUser) {
     return <LoginPage />;
   }
@@ -52,14 +66,14 @@ export function MainLayout({ children }: MainLayoutProps) {
         
         <div className="flex items-center gap-2 lg:gap-4 ml-auto">
           <NotificationBell />
-          <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs lg:text-sm font-medium">
+          <NavLink to="/profile" className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs lg:text-sm font-medium">
             {currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-          </div>
+          </NavLink>
         </div>
       </div>
       
-      <main className="lg:pl-64 pt-14 lg:pt-16 transition-all duration-300">
-        <div className="min-h-screen p-4 lg:p-6">
+      <main className="lg:pl-64 pt-14 lg:pt-16 transition-all duration-300 w-full overflow-x-hidden">
+        <div className="min-h-screen p-4 lg:p-6 w-full">
           {children}
         </div>
       </main>

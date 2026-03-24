@@ -866,15 +866,15 @@ export default function StockAllocation() {
 
   return (
     <MainLayout>
-      <div className="p-8">
-        <div className="flex items-center justify-between mb-6">
+      <div className="p-4 sm:p-6 md:p-8 w-full mx-auto" style={{ maxWidth: '98vw' }}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-6 mb-6">
           <div>
             <h1 className="text-2xl font-bold">Stock Allocation</h1>
             <p className="text-muted-foreground">
               Manage and allocate stock to your {currentUser.role === 'admin' ? 'regional managers' : currentUser.role === 'regional_manager' ? 'team leaders' : 'field officers'}
             </p>
           </div>
-          <Button onClick={() => setBulkAllocateOpen(true)} disabled={myStock.length === 0 || eligibleRecipients.length === 0}>
+          <Button onClick={() => setBulkAllocateOpen(true)} disabled={myStock.length === 0 || eligibleRecipients.length === 0} className="w-full sm:w-auto">
             <Layers className="h-4 w-4 mr-2" />
             Bulk Allocate
           </Button>
@@ -889,7 +889,7 @@ export default function StockAllocation() {
         />
 
         {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4 mb-6">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4 mb-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">My Stock</CardTitle>
@@ -936,41 +936,42 @@ export default function StockAllocation() {
           </Card>
         </div>
 
-        <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-          <TabsList>
-            <TabsTrigger value="my-stock">My Stock</TabsTrigger>
-            <TabsTrigger value="recipients">Recipients</TabsTrigger>
-            <TabsTrigger value="recall" className="flex items-center gap-1">
+        <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
+          <TabsList className="w-full grid grid-cols-2 sm:grid-cols-4 h-auto">
+            <TabsTrigger value="my-stock" className="text-xs sm:text-sm">My Stock</TabsTrigger>
+            <TabsTrigger value="recipients" className="text-xs sm:text-sm">Recipients</TabsTrigger>
+            <TabsTrigger value="recall" className="flex items-center justify-center gap-0.5 sm:gap-1 text-xs sm:text-sm">
               <RotateCcw className="h-3 w-3" />
-              Recall Stock
+              <span className="hidden xs:inline">Recall</span>
               {totalRecallableItems > 0 && (
-                <Badge variant="secondary" className="ml-1 h-5 px-1.5">{totalRecallableItems}</Badge>
+                <Badge variant="secondary" className="ml-1 h-5 px-1 text-xs">{totalRecallableItems}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="history">Allocation History</TabsTrigger>
+            <TabsTrigger value="history" className="text-xs sm:text-sm">History</TabsTrigger>
           </TabsList>
 
           <TabsContent value="my-stock" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-4">
                   <div>
                     <CardTitle>Available Stock</CardTitle>
                     <CardDescription>Phones in your stock pool ready for allocation (from database inventory)</CardDescription>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="relative w-64">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <div className="relative flex-1 sm:flex-1">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="Search by IMEI or product..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-9"
+                        className="pl-9 w-full"
                       />
                     </div>
                     <Button 
                       size="sm" 
                       variant="outline"
+                      className="w-full sm:w-auto"
                       onClick={() => {
                         setIsLoading(true);
                         stockAllocationService.getAvailableStock()
@@ -1241,7 +1242,7 @@ export default function StockAllocation() {
           <TabsContent value="recall" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-6">
                   <div>
                     <CardTitle className="flex items-center gap-2">
                       <RotateCcw className="h-5 w-5 text-warning" />
@@ -1254,6 +1255,7 @@ export default function StockAllocation() {
                   {selectedRecallImeis.length > 0 && (
                     <Button 
                       variant="destructive"
+                      className="w-full sm:w-auto"
                       onClick={() => setBulkRecallDialogOpen(true)}
                     >
                       <RotateCcw className="h-4 w-4 mr-2" />
@@ -1682,12 +1684,12 @@ export default function StockAllocation() {
           </DialogContent>
         </Dialog>
 
-        {/* Stock Journey Dialog */}
+        {/* Stock Journey Dialog - use API-loaded users and allocations so journey shows DB data */}
         {journeyImei && (
           <StockJourney
             imei={journeyImei}
-            users={users}
-            allocations={stockAllocations}
+            users={loadedUsers.length > 0 ? loadedUsers : users}
+            allocations={loadedAllocations.length > 0 ? loadedAllocations : stockAllocations}
             open={journeyDialogOpen}
             onOpenChange={(open) => {
               setJourneyDialogOpen(open);

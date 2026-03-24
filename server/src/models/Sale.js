@@ -86,7 +86,7 @@ saleSchema.pre('save', async function(next) {
     if (!this.receiptNumber) {
       const Sale = mongoose.model('Sale');
       const count = await Sale.countDocuments({});
-      this.receiptNumber = `RCP-${String(2000 + count + 1).padStart(6, '0')}`;
+      this.receiptNumber = `RCP-${String(3000 + count + 1).padStart(6, '0')}`;
     }
     next();
   } catch (error) {

@@ -5,6 +5,11 @@
 @tailwind utilities;
 
 @layer base {
+  html, body {
+    overflow-x: hidden;
+    width: 100%;
+  }
+  
   :root {
     /* Finetech Brand Colors - Teal to Deep Blue */
     --background: 210 20% 98%;
@@ -136,6 +141,9 @@
 @layer components {
   .btn-brand {
     @apply bg-primary text-primary-foreground hover:bg-primary/90;
+  }
+  .btn-success {
+    @apply bg-success text-success-foreground hover:bg-success/90;
   }
 
   .card-hover {

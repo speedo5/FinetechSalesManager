@@ -287,11 +287,6 @@ export default function ActivityLog() {
                             <p className="text-sm font-semibold text-primary">by {log.userId?.name || 'Unknown User'}</p>
                             {getTypeBadge(log)}
                           </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {log.details?.description || 
-                             log.details?.path || 
-                             (typeof log.details === 'string' ? log.details : 'Activity recorded')}
-                          </p>
                           <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
                             <span>{log.userId?.email || 'N/A'}</span>
                             <span>•</span>

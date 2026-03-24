@@ -9,6 +9,7 @@ import { dashboardService, type DashboardStats, type MappedDashboardStats, type 
 import { userService } from '@/services/userService';
 import { salesService } from '@/services/salesService';
 import { toast } from 'sonner';
+import { ApiClientError } from '@/services/apiClient';
 import { 
   DollarSign, 
   ShoppingCart, 
@@ -201,8 +202,14 @@ export default function Dashboard() {
           setRecentSales(enrichRecentSales(recentFromContext));
         }
       } catch (error) {
-        toast.error('Failed to load dashboard data');
-        console.error(error);
+        // Provide richer logging for ApiClientError instances
+        if (error instanceof ApiClientError) {
+          console.error('API client error:', error.getDetailedInfo());
+          toast.error(error.getDisplayMessage());
+        } else {
+          console.error('Failed to load dashboard data:', error);
+          toast.error((error as any)?.message || 'Failed to load dashboard data');
+        }
         
         // Use context data as fallback on error
         const sellerMap = new Map<string, { name: string; count: number; revenue: number }>();
@@ -317,7 +324,9 @@ export default function Dashboard() {
     // derive inventory and commission figures from context
     const totalPhoneStock = (products || []).reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
     const imeiInStock = (imeis || []).filter(i => i.status === 'IN_STOCK').length;
-    const phonesInStock = totalPhoneStock + imeiInStock;
+    const imeiAllocated = (imeis || []).filter(i => i.status === 'ALLOCATED').length;
+    // Total phones in stock = IN_STOCK + ALLOCATED (both are available in the system)
+    const phonesInStock = totalPhoneStock + imeiInStock + imeiAllocated;
     const phonesSold = totalSalesCount; // best-effort fallback
     const pendingCommissions = (commissions || []).filter(c => c.status === 'pending').reduce((s, c) => s + (c.amount || 0), 0);
     const totalCommissionsPaid = (commissions || []).filter(c => c.status === 'paid').reduce((s, c) => s + (c.amount || 0), 0);
@@ -327,10 +336,10 @@ export default function Dashboard() {
       todayRevenue,
       totalSales: totalSalesCount,
       todaySales: todaySales.length,
-      totalPhones: totalPhoneStock + imeiInStock,
+      totalPhones: totalPhoneStock + imeiInStock + imeiAllocated,
       phonesInStock,
       phonesSold,
-      allocatedPhones: 0,
+      allocatedPhones: imeiAllocated,
       pendingCommissions,
       totalCommissionsPaid,
     };
@@ -362,7 +371,8 @@ export default function Dashboard() {
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Total Revenue Card */}
           <StatCard
             title="Total Revenue"
             value={isLoading ? '...' : `Ksh ${(calculatedStats?.totalRevenue || 0).toLocaleString()}`}
@@ -371,6 +381,8 @@ export default function Dashboard() {
             variant="primary"
             trend={{ value: 12.5, isPositive: true }}
           />
+          
+          {/* Today's Sales Card */}
           <StatCard
             title="Today's Sales"
             value={isLoading ? '...' : calculatedStats?.todaySales || 0}
@@ -379,20 +391,62 @@ export default function Dashboard() {
             variant="success"
             trend={{ value: 8.2, isPositive: true }}
           />
-          <StatCard
-            title="Phones In Stock"
-            value={isLoading ? '...' : calculatedStats?.phonesInStock || 0}
-            subtitle={`${isLoading ? '...' : calculatedStats?.phonesSold || 0} sold this month`}
-            icon={Smartphone}
-            variant="accent"
-          />
-          <StatCard
-            title="Pending Commissions"
-            value={isLoading ? '...' : `Ksh ${(calculatedStats?.pendingCommissions || 0).toLocaleString()}`}
-            subtitle="To be paid"
-            icon={TrendingUp}
-            variant="warning"
-          />
+
+          {/* Phones in Stock | Allocated Stock Card */}
+          <Card className="border shadow-sm">
+            <CardContent className="pt-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg bg-blue-50 dark:bg-blue-950/30">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Smartphone className="h-5 w-5 text-accent" />
+                    <p className="text-sm text-muted-foreground">Phones In Stock</p>
+                  </div>
+                  <p className="text-3xl font-bold text-foreground">
+                    {isLoading ? '...' : (calculatedStats?.phonesInStock || 0).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Available</p>
+                </div>
+                <div className="p-4 rounded-lg bg-orange-50 dark:bg-orange-950/30">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Package className="h-5 w-5 text-warning" />
+                    <p className="text-sm text-muted-foreground">Allocated</p>
+                  </div>
+                  <p className="text-3xl font-bold text-foreground">
+                    {isLoading ? '...' : (calculatedStats?.allocatedPhones || 0).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Field Officers</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Pending Commission | Paid Commission Card */}
+          <Card className="border shadow-sm">
+            <CardContent className="pt-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg bg-purple-50 dark:bg-purple-950/30">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp className="h-5 w-5 text-warning" />
+                    <p className="text-sm text-muted-foreground">Pending</p>
+                  </div>
+                  <p className="text-3xl font-bold text-foreground">
+                    {isLoading ? '...' : `Ksh ${(calculatedStats?.pendingCommissions || 0).toLocaleString()}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">To be paid</p>
+                </div>
+                <div className="p-4 rounded-lg bg-green-50 dark:bg-green-950/30">
+                  <div className="flex items-center gap-2 mb-2">
+                    <DollarSign className="h-5 w-5 text-success" />
+                    <p className="text-sm text-muted-foreground">Paid</p>
+                  </div>
+                  <p className="text-3xl font-bold text-foreground">
+                    {isLoading ? '...' : `Ksh ${(calculatedStats?.totalCommissionsPaid || 0).toLocaleString()}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Completed</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Charts Row */}

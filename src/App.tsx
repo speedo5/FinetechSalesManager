@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppProvider } from "@/context/AppContext";
 import Dashboard from "./pages/Dashboard";
+import { LoginPage } from "./pages/LoginPage";
 import Inventory from "./pages/Inventory";
 import POS from "./pages/POS";
 import Products from "./pages/Products";
@@ -27,6 +28,7 @@ import TeamLeaderPOS from "./pages/TeamLeaderPOS";
 import StockAllocation from "./pages/StockAllocation";
 import ManageFOs from "./pages/ManageFOs";
 import AllocationAudit from "./pages/AllocationAudit";
+import Profile from "./pages/Profile";
 import { MainLayout } from "./components/layout/MainLayout";
 import NotFound from "./pages/NotFound";
 
@@ -38,9 +40,10 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/login" element={<LoginPage />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/pos" element={<POS />} />
             <Route path="/products" element={<Products />} />
@@ -67,6 +70,7 @@ const App = () => (
             <Route path="/fo/commissions" element={<MainLayout><FOCommissions /></MainLayout>} />
             <Route path="/fo/sales-history" element={<MainLayout><FOSalesHistory /></MainLayout>} />
             <Route path="/fo/my-stock" element={<StockAllocation />} />
+            <Route path="/profile" element={<MainLayout><Profile /></MainLayout>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

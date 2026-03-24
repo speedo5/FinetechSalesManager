@@ -40,6 +40,7 @@ export interface RegisterIMEIRequest {
   productId: string;
   price?: number;
   source?: string;
+  capacity?: string;
   commissionConfig?: {
     foCommission: number;
     teamLeaderCommission: number;
@@ -52,6 +53,7 @@ export interface UpdateIMEIRequest {
   status?: string;
   price?: number;
   source?: string;
+  capacity?: string;
   currentOwnerId?: string;
   commissionConfig?: {
     foCommission: number;

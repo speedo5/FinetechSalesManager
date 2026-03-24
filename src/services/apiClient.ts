@@ -106,12 +106,48 @@ class ApiClient {
         headers,
       });
 
-      const data = await response.json();
+      // Try to parse JSON body safely
+      let data: any = undefined;
+      try {
+        data = await response.json();
+      } catch (e) {
+        // If there's no JSON body, leave data undefined
+      }
+
+      // Handle unauthorized centrally: clear token and redirect to login
+      // in a guarded way to avoid navigation loops when many requests
+      // receive 401 simultaneously (dev servers often cause this).
+      if (response.status === 401) {
+        debugLog('API Unauthorized (401) - clearing token and performing guarded redirect to /login');
+        try { tokenManager.remove(); } catch (e) { /* ignore */ }
+
+        if (typeof window !== 'undefined') {
+          try {
+            const currentPath = window.location.pathname || '/';
+            const lastRedirect = sessionStorage.getItem('auth_redirect_ts');
+            const now = Date.now();
+            const REDIRECT_COOLDOWN = 5000; // ms - avoid redirect storm
+
+            if (currentPath !== '/login' && (!lastRedirect || now - Number(lastRedirect) > REDIRECT_COOLDOWN)) {
+              sessionStorage.setItem('auth_redirect_ts', String(now));
+              window.location.href = '/login';
+            }
+          } catch (e) {
+            // ignore sessionStorage or navigation failures
+          }
+        }
+
+        throw new ApiClientError(
+          (data && data.message) || 'Not authorized to access this route',
+          401,
+          data
+        );
+      }
 
       if (!response.ok) {
         debugLog('API Error:', data);
         throw new ApiClientError(
-          data.message || 'Request failed',
+          (data && data.message) || 'Request failed',
           response.status,
           data
         );

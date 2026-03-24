@@ -82,7 +82,7 @@ interface SidebarProps {
 export function Sidebar({ onClose }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
-  const { currentUser, setCurrentUser } = useApp();
+  const { currentUser, setCurrentUser, logout } = useApp();
 
   const isFO = currentUser?.role === 'field_officer';
   const isRegionalManager = currentUser?.role === 'regional_manager';
@@ -187,7 +187,7 @@ export function Sidebar({ onClose }: SidebarProps) {
             'w-full text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
             collapsed && 'px-2'
           )}
-          onClick={() => setCurrentUser(null)}
+          onClick={() => logout()}
         >
           <LogOut className="h-4 w-4" />
           {!collapsed && <span className="ml-2">Sign Out</span>}

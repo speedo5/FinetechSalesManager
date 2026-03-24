@@ -50,7 +50,8 @@ const generateRegionReportData = (
   // Normalize region matching (case-insensitive) and include sales that have a direct `region` field
   const regionNormalized = (region || '').toString().toLowerCase().trim();
   const regionUsers = users.filter(u => (u.region || '').toString().toLowerCase().trim() === regionNormalized);
-  const regionUserIds = regionUsers.map(u => u.id);
+  // Normalize user ids to strings for safe comparison with sale IDs
+  const regionUserIds = regionUsers.map(u => String(u.id));
   console.log(`🔍 generateRegionReportData for region "${region}":`, { 
     regionUsersCount: regionUsers.length, 
     regionUserIds,
@@ -62,16 +63,42 @@ const generateRegionReportData = (
     const saleDate = new Date(sale.createdAt);
     const isInDateRange = saleDate >= startDate && saleDate <= endDate;
 
-    const saleRegion = (sale.region || sale.regionName || '').toString().toLowerCase().trim();
+    // Robust extraction of sale region
+    const getSaleRegion = (s: any) => {
+      if (!s) return '';
+      if (typeof s.region === 'string') return s.region;
+      if (s.region && typeof s.region === 'object') {
+        // common shapes: { name: 'Nairobi' } or { region: 'Nairobi' }
+        return s.region.name || s.region.region || '';
+      }
+      return s.regionName || s.createdByRegion || '';
+    };
+
+    const saleRegion = (getSaleRegion(sale) || '').toString().toLowerCase().trim();
+
+    const saleRegionalManagerId = sale.regionalManagerId ? String(sale.regionalManagerId) : '';
+    const saleFoId = sale.foId ? String(sale.foId) : '';
+    const saleCreatedBy = sale.createdBy ? String(sale.createdBy) : '';
+    const saleAssignedRm = sale.assignedRmId ? String(sale.assignedRmId) : '';
+    const saleAssignedTl = sale.assignedTlId ? String(sale.assignedTlId) : '';
+    const saleAssignedFo = sale.assignedFoId ? String(sale.assignedFoId) : '';
+
+    // If sale was assigned to a region/manager via assignedRmId/assignedTlId/assignedFoId, prefer that mapping
+    const isAssignedToRegion =
+      (saleAssignedRm && regionUserIds.includes(saleAssignedRm)) ||
+      (saleAssignedTl && regionUserIds.includes(saleAssignedTl)) ||
+      (saleAssignedFo && regionUserIds.includes(saleAssignedFo));
 
     const isRegionSale =
       // Direct region field on sale (case-insensitive)
       (saleRegion && saleRegion === regionNormalized) ||
-      // Regional manager / FO based matching
-      (sale.regionalManagerId && regionUserIds.includes(sale.regionalManagerId)) ||
-      (sale.foId && regionUserIds.includes(sale.foId)) ||
+      // Assigned mapping takes precedence
+      isAssignedToRegion ||
+      // Regional manager / FO based matching (compare normalized string IDs)
+      (saleRegionalManagerId && regionUserIds.includes(saleRegionalManagerId)) ||
+      (saleFoId && regionUserIds.includes(saleFoId)) ||
       // Creator user belongs to region
-      regionUserIds.includes(sale.createdBy) ||
+      (saleCreatedBy && regionUserIds.includes(saleCreatedBy)) ||
       // Some APIs may include creator region on the sale
       ((sale.createdByRegion || '').toString().toLowerCase().trim() === regionNormalized);
 
@@ -522,12 +549,26 @@ export const printReport = (
   // Open print window
   const printWindow = window.open('', '_blank');
   if (printWindow) {
+    printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
     printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-    }, 500);
+    // Wait for the new window to finish loading before invoking print
+    printWindow.onload = () => {
+      try {
+        printWindow.print();
+      } catch (err) {
+        console.error('Print failed:', err);
+      }
+    };
+    // Optionally close the print window after printing (browser may block closing)
+    try {
+      printWindow.onafterprint = () => {
+        try { printWindow.close(); } catch (e) { /* ignore */ }
+      };
+    } catch (e) {
+      // some browsers don't support onafterprint on popup windows
+    }
   }
 };
 
@@ -809,3 +850,27 @@ export const generateRegionalExcelReport = async (
     throw error;
   }
 };
+
+// General Excel export function
+export function exportToExcel<T extends Record<string, any>>(
+  data: T[],
+  filename: string,
+  columns: { key: keyof T; header: string }[]
+): void {
+  const headers = columns.map(c => c.header);
+  const rows = data.map(item =>
+    columns.map(c => {
+      const value = item[c.key];
+      if (value && typeof value === 'object' && 'getTime' in value) {
+        return new Date(value as Date).toLocaleDateString();
+      }
+      return value ?? '';
+    })
+  );
+
+  const worksheetData = [headers, ...rows];
+  const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+  XLSX.writeFile(workbook, `${filename}.xlsx`);
+}

@@ -142,6 +142,7 @@ export function BulkImportDialog({ open, onOpenChange, onImport, products }: Bul
         productId: row.productId,
         price: row.sellingPrice,
         source: row.source,
+        capacity: row.capacity,
         commissionConfig: 
           (row.foCommission + row.teamLeaderCommission + row.regionalManagerCommission) > 0 
             ? {
@@ -187,13 +188,14 @@ export function BulkImportDialog({ open, onOpenChange, onImport, products }: Bul
             const totalCommission = (item.commissionConfig?.foCommission || 0) + 
                                    (item.commissionConfig?.teamLeaderCommission || 0) + 
                                    (item.commissionConfig?.regionalManagerCommission || 0);
+            const parsedRow = parsedData.find(r => r.imei === item.imei);
 
             registeredImeis.push({
               id: item.id || item._id,
               imei: item.imei,
               productId: item.productId?._id || item.productId || '',
               productName: item.productId?.name || products.find(p => p.id === item.productId)?.name || 'Unknown',
-              capacity: '64GB',
+              capacity: parsedRow?.capacity || item.capacity || '',
               status,
               sellingPrice: item.price || 0,
               commission: totalCommission,

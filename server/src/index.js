@@ -14,7 +14,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:8080', 'http://localhost:3000'],
+  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:8080', 'https://finetechmediaretailflowsuite.onrender.com/','http://localhost:3000','https://finetechmedia.co.ke'],
   credentials: true
 }));
 app.use(express.json());

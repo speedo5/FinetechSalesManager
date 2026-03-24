@@ -229,15 +229,29 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
 
   // Generate proper FO Code format
   const getFOCode = () => {
-    if (currentUser?.foCode && currentUser.foCode.startsWith('FO-')) {
-      return currentUser.foCode;
+    // Prefer explicit FO code fields from the database if present
+    const dbCode = (currentUser as any)?.foCode || (currentUser as any)?.fo_code || (currentUser as any)?.FOCode || (currentUser as any)?.focode;
+    if (dbCode) {
+      const codeStr = String(dbCode).trim();
+      // If already formatted like FO-001, return as-is
+      if (/^FO-\d{3}$/i.test(codeStr)) return codeStr.toUpperCase();
+      // If numeric or short (e.g., "001" or "1"), format to FO-###
+      const digits = (codeStr.match(/\d+/) || [codeStr])[0];
+      if (digits) {
+        const padded = String(Number(digits)).padStart(3, '0');
+        return `FO-${padded}`;
+      }
+      // Otherwise return raw DB value
+      return codeStr;
     }
-    // Extract number from ID or use index from users list
+
+    // Fallback: derive from users list index if DB value not present
     if (currentUser?.id) {
-      const foIndex = users?.findIndex(u => u.id === currentUser.id) || 0;
+      const foIndex = users?.findIndex(u => (u as any).id === currentUser.id || (u as any)._id === currentUser.id) || 0;
       const codeNum = String(Math.max(foIndex + 1, 1)).padStart(3, '0');
       return `FO-${codeNum}`;
     }
+
     return 'FO-001';
   };
 
@@ -650,103 +664,6 @@ export default function FOPortal({ onSaleComplete }: FOPortalProps) {
       </div>
 
       <div className="grid gap-6">
-        {/* FO Dashboard summary cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm"><Receipt className="h-4 w-4 text-primary"/> Total Sales</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{totalSalesCount}</div>
-              <div className="text-sm text-muted-foreground">Ksh {totalSalesValue.toLocaleString()}</div>
-            </CardContent>
-          </Card>
-
-          <Card className="border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm"><CheckCircle className="h-4 w-4 text-primary"/> Today's Sales</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{todaysSalesCount}</div>
-              <div className="text-sm text-muted-foreground">Ksh {todaysSalesValue.toLocaleString()}</div>
-            </CardContent>
-          </Card>
-
-          <Card className="border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm"><Building2 className="h-4 w-4 text-primary"/> Pending Commissions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">Ksh {pendingCommissions.toLocaleString()}</div>
-              <div className="text-sm text-muted-foreground">Unpaid commissions</div>
-            </CardContent>
-          </Card>
-
-          <Card className="border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm"><Smartphone className="h-4 w-4 text-primary"/> Available Stock</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{availableStockCount}</div>
-              <div className="text-sm text-muted-foreground">Allocated IMEIs</div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Recent sales and top products */}
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card className="border">
-            <CardHeader>
-              <CardTitle>Recent Sales</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {recentSales.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No recent sales</div>
-              ) : (
-                <div className="space-y-2">
-                  {recentSales.map((s: any) => {
-                    const amt = getSaleAmount(s);
-                    const when = s.createdAt ? new Date(s.createdAt) : s.date ? new Date(s.date) : null;
-                    const prodId = s.productId || (s.items && s.items[0] && (s.items[0].productId || s.items[0].product)) || null;
-                    const pid = typeof prodId === 'object' ? (prodId._id || prodId.id) : prodId;
-                    const prod = products.find(p => p.id === pid || (p as any)._id === pid);
-                    return (
-                      <div key={s.id || s._id} className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium">{prod ? prod.name : (s.productName || 'Sale')}</div>
-                          <div className="text-xs text-muted-foreground">{when ? when.toLocaleString() : '—'}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-semibold">Ksh {amt.toLocaleString()}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="border">
-            <CardHeader>
-              <CardTitle>Top Products</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {topProducts.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No sales data</div>
-              ) : (
-                <div className="space-y-2">
-                  {topProducts.map(tp => (
-                    <div key={(tp.product as any).id} className="flex items-center justify-between">
-                      <div className="font-medium">{(tp.product as any).name}</div>
-                      <div className="text-sm text-muted-foreground">{tp.count} sold</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
         {/* Product Selection */}
         <Card className="border shadow-sm">
           <CardHeader>

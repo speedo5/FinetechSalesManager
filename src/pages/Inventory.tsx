@@ -63,6 +63,7 @@ export default function Inventory() {
     foCommission: '',
     teamLeaderCommission: '',
     regionalManagerCommission: '',
+    capacity: '',
   });
 
   // Get manager's region - Regional Managers only see their region's inventory
@@ -95,8 +96,8 @@ export default function Inventory() {
         })))
       }
 
-      // Load IMEIs
-      const imeisResponse = await imeiService.getAll();
+      // Load IMEIs (request large limit to retrieve full inventory for stats)
+      const imeisResponse = await imeiService.getAll({ limit: 100000 });
       if (imeisResponse.success && imeisResponse.data) {
         const imeisData = Array.isArray(imeisResponse.data.imeis)
           ? imeisResponse.data.imeis
@@ -104,9 +105,13 @@ export default function Inventory() {
             ? imeisResponse.data
             : [];
         
-        // Filter IMEIs by region if user is Regional Manager
+        // Filter IMEIs based on user role
         let filteredImeis = imeisData;
-        if (managerRegion) {
+        if (currentUser?.role === 'regional_manager') {
+          // Regional Managers only see their allocated stock
+          filteredImeis = imeisData.filter((i: any) => i.status === 'allocated');
+        } else if (managerRegion) {
+          // Team Leaders see by region
           filteredImeis = imeisData.filter((i: any) => i.region === managerRegion);
         }
         
@@ -126,7 +131,7 @@ export default function Inventory() {
             imei: i.imei,
             productId: i.productId?._id || i.productId || '',
             productName: i.productId?.name || 'Unknown',
-            capacity: '64GB',
+            capacity: i.capacity || i.capacityDetail || i.productId?.capacity || '',
             status,
             sellingPrice: i.price || i.sellingPrice || 0, // Use price field from API, fallback to sellingPrice
             commission: i.commissionConfig ? 
@@ -190,6 +195,7 @@ export default function Inventory() {
 
   const inStockImeis = filteredImeis.filter(i => i.status === 'IN_STOCK');
   const soldImeis = filteredImeis.filter(i => i.status === 'SOLD');
+  const allocatedImeis = filteredImeis.filter(i => i.status === 'ALLOCATED');
   const lostImeis = filteredImeis.filter(i => i.status === 'LOST' || i.status === 'LOCKED');
 
   const validateIMEI = (imei: string, excludeId?: string) => {
@@ -230,6 +236,7 @@ export default function Inventory() {
         productId: newImei.productId,
         price: parseFloat(newImei.sellingPrice) || undefined, // Include selling price
         source: newImei.source, // Include selected source company
+        capacity: newImei.capacity,
         commissionConfig,
       });
 
@@ -250,7 +257,7 @@ export default function Inventory() {
           imei: data.imei,
           productId: newImei.productId,
           productName: product.name,
-          capacity: '64GB',
+          capacity: newImei.capacity || data.capacity || '',
           status,
           sellingPrice: parseFloat(newImei.sellingPrice) || product.price,
           commission: totalCommission,
@@ -259,7 +266,7 @@ export default function Inventory() {
           registeredAt: data.registeredAt ? new Date(data.registeredAt) : new Date(),
         };
 
-        setImeis([...imeis, newItem]);
+        setImeis(prev => [...prev, newItem]);
         setIsDialogOpen(false);
         setNewImei({ 
           imei: '', 
@@ -269,6 +276,7 @@ export default function Inventory() {
           foCommission: '',
           teamLeaderCommission: '',
           regionalManagerCommission: '',
+          capacity: '',
         });
         toast({ title: 'Success', description: `IMEI ${newItem.imei} registered successfully` });
       }
@@ -307,10 +315,37 @@ export default function Inventory() {
         status: apiStatus,
         commissionConfig,
         price: editingImei.sellingPrice, // Save the selling price
+        capacity: editingImei.capacity,
       });
 
-      if (response.success) {
-        setImeis(imeis.map(i => i.id === editingImei.id ? editingImei : i));
+      if (response.success && response.data) {
+        const updated = response.data as any;
+        // Map backend lowercase status (e.g. 'in_stock') to frontend enum (e.g. 'IN_STOCK')
+        const backendToFrontendStatus: Record<string, IMEIStatus> = {
+          'in_stock': 'IN_STOCK',
+          'allocated': 'ALLOCATED',
+          'sold': 'SOLD',
+          'locked': 'LOCKED',
+          'lost': 'LOST',
+        };
+
+        const updatedStatus = backendToFrontendStatus[(updated.status || '').toLowerCase()] || editingImei.status;
+
+        const updatedItem: IMEI = {
+          id: updated.id || updated._id,
+          imei: updated.imei,
+          productId: updated.productId?._id || updated.productId || editingImei.productId,
+          productName: updated.productId?.name || editingImei.productName,
+          capacity: updated.capacity ?? editingImei.capacity ?? '',
+          status: updatedStatus,
+          sellingPrice: updated.price ?? editingImei.sellingPrice,
+          commission: (updated.commissionConfig?.foCommission || 0) + (updated.commissionConfig?.teamLeaderCommission || 0) + (updated.commissionConfig?.regionalManagerCommission || 0) || editingImei.commission,
+          commissionConfig: updated.commissionConfig || editingImei.commissionConfig,
+          source: updated.source || editingImei.source,
+          registeredAt: updated.registeredAt ? new Date(updated.registeredAt) : editingImei.registeredAt,
+        };
+
+        setImeis(prev => prev.map(i => i.id === editingImei.id ? updatedItem : i));
         setEditingImei(null);
         toast({ title: 'Success', description: 'IMEI updated successfully' });
       }
@@ -323,19 +358,20 @@ export default function Inventory() {
   const handleDeleteImei = async () => {
     if (!deleteImei) return;
     try {
-      // Call the delete endpoint if available, otherwise just remove from state
-      try {
-        await imeiService.delete(deleteImei.id);
-      } catch (apiError) {
-        // If API doesn't support delete, just remove from local state
-        console.warn('Delete API not available, removing from local state only');
+      // Call the delete endpoint and ensure server confirms deletion
+      const response = await imeiService.delete(deleteImei.id);
+      if (response && (response as any).success) {
+        setImeis(prev => prev.filter(i => i.id !== deleteImei.id));
+        setDeleteImei(null);
+        toast({ title: 'Success', description: 'IMEI deleted from inventory' });
+      } else {
+        // API responded but indicated failure
+        const msg = (response as any)?.message || 'Failed to delete IMEI on server';
+        toast({ title: 'Error', description: msg, variant: 'destructive' });
       }
-      
-      setImeis(imeis.filter(i => i.id !== deleteImei.id));
-      setDeleteImei(null);
-      toast({ title: 'Success', description: 'IMEI deleted from inventory' });
     } catch (error: any) {
-      toast({ title: 'Error', description: error.message || 'Failed to delete IMEI', variant: 'destructive' });
+      // Surface server/authorization errors and keep item in UI
+      toast({ title: 'Error', description: error?.message || 'Failed to delete IMEI', variant: 'destructive' });
       console.error('Error deleting IMEI:', error);
     }
   };
@@ -370,28 +406,30 @@ export default function Inventory() {
             <p className="text-muted-foreground">Manage IMEI registration and phone inventory</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => exportInventory(imeis)}>
-              <Download className="h-4 w-4 mr-2" />Export
-            </Button>
-            <Button variant="outline" onClick={() => setIsBulkImportOpen(true)}>
-              <FileSpreadsheet className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Bulk Import</span>
-              <span className="sm:hidden">Import</span>
-            </Button>
-            <Button variant="outline" onClick={() => setIsAddProductOpen(true)}>
-              <Package className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Add Product</span>
-              <span className="sm:hidden">Product</span>
-            </Button>
-            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-              <DialogTrigger asChild>
-                <Button className="btn-brand">
-                  <Plus className="h-4 w-4 mr-2" />
-                  <span className="hidden sm:inline">Register IMEI</span>
-                  <span className="sm:hidden">IMEI</span>
+            {isAdmin && (
+              <>
+                <Button variant="outline" onClick={() => exportInventory(imeis)}>
+                  <Download className="h-4 w-4 mr-2" />Export
                 </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-md">
+                <Button variant="outline" onClick={() => setIsBulkImportOpen(true)}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  <span className="hidden sm:inline">Bulk Import</span>
+                  <span className="sm:hidden">Import</span>
+                </Button>
+                <Button variant="outline" onClick={() => setIsAddProductOpen(true)}>
+                  <Package className="h-4 w-4 mr-2" />
+                  <span className="hidden sm:inline">Add Product</span>
+                  <span className="sm:hidden">Product</span>
+                </Button>
+                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="btn-brand">
+                      <Plus className="h-4 w-4 mr-2" />
+                      <span className="hidden sm:inline">Register IMEI</span>
+                      <span className="sm:hidden">IMEI</span>
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-md">
                 <DialogHeader>
                   <DialogTitle>Register New IMEI</DialogTitle>
                   <DialogDescription>Add a new phone to inventory with commission settings.</DialogDescription>
@@ -405,7 +443,24 @@ export default function Inventory() {
                     <Label>Product Model</Label>
                     <Select value={newImei.productId} onValueChange={(v) => {
                       const prod = products.find(p => p.id === v);
-                      setNewImei({ ...newImei, productId: v, sellingPrice: prod?.price.toString() || '' });
+                      // Auto-populate capacity from product name if it contains GB
+                      const extractCapacityFromName = (name: string) => {
+                        if (!name) return '';
+                        // Look for the last GB value in the name (typically storage)
+                        const matches = name.match(/(\d+)\s*GB/gi);
+                        if (matches && matches.length > 0) {
+                          const lastMatch = matches[matches.length - 1];
+                          return lastMatch.replace(/\s+/g, '');
+                        }
+                        return '';
+                      };
+                      const autoCapacity = extractCapacityFromName(prod?.name || '');
+                      setNewImei({ 
+                        ...newImei, 
+                        productId: v, 
+                        sellingPrice: prod?.price.toString() || '',
+                        capacity: autoCapacity || newImei.capacity // Keep existing capacity if auto-extraction fails
+                      });
                     }}>
                       <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
                       <SelectContent>
@@ -423,6 +478,10 @@ export default function Inventory() {
                         <SelectItem value="onfon">Onfon</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Capacity</Label>
+                    <Input placeholder="e.g. 4GB|64GB (auto-filled from product name)" value={newImei.capacity} onChange={(e) => setNewImei({ ...newImei, capacity: e.target.value })} />
                   </div>
                   <div className="grid gap-2">
                     <Label>Selling Price (Ksh)</Label>
@@ -484,6 +543,8 @@ export default function Inventory() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+              </>
+            )}
           </div>
         </div>
 
@@ -494,7 +555,7 @@ export default function Inventory() {
                 <div className="flex items-center gap-3">
                   <stat.icon className={`h-8 w-8 ${stat.color}`} />
                   <div>
-                    <p className="text-2xl font-bold text-foreground">{stat.value}</p>
+                    <p className="text-2xl font-bold text-foreground">{isLoading ? '—' : stat.value}</p>
                     <p className="text-sm text-muted-foreground">{stat.label}</p>
                   </div>
                 </div>
@@ -522,18 +583,22 @@ export default function Inventory() {
 
         <Tabs defaultValue="available" className="w-full">
           <TabsList className="mb-4">
-            <TabsTrigger value="available">Available <span className="ml-1 text-xs bg-success/20 text-success px-2 py-0.5 rounded-full">{inStockImeis.length}</span></TabsTrigger>
-            <TabsTrigger value="sold">Sold <span className="ml-1 text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full">{soldImeis.length}</span></TabsTrigger>
-            <TabsTrigger value="lost">Lost <span className="ml-1 text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded-full">{lostImeis.length}</span></TabsTrigger>
+            <TabsTrigger value="available">Available <span className="ml-1 text-xs bg-success/20 text-success px-2 py-0.5 rounded-full">{isLoading ? '—' : inStockImeis.length}</span></TabsTrigger>
+            <TabsTrigger value="sold">Sold <span className="ml-1 text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full">{isLoading ? '—' : soldImeis.length}</span></TabsTrigger>
+            <TabsTrigger value="allocated">Allocated <span className="ml-1 text-xs bg-accent/20 text-accent px-2 py-0.5 rounded-full">{isLoading ? '—' : allocatedImeis.length}</span></TabsTrigger>
+            <TabsTrigger value="lost">Lost <span className="ml-1 text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded-full">{isLoading ? '—' : lostImeis.length}</span></TabsTrigger>
           </TabsList>
           <TabsContent value="available">
-            <InventoryTable imeis={inStockImeis} getStatusBadge={getStatusBadge} onEdit={setEditingImei} onDelete={setDeleteImei} onSell={handleSell} showActions />
+            <InventoryTable imeis={inStockImeis} getStatusBadge={getStatusBadge} onEdit={setEditingImei} onDelete={setDeleteImei} onSell={handleSell} showActions isAdmin={isAdmin} />
           </TabsContent>
           <TabsContent value="sold">
             <InventoryTable imeis={soldImeis} getStatusBadge={getStatusBadge} />
           </TabsContent>
+          <TabsContent value="allocated">
+            <InventoryTable imeis={allocatedImeis} getStatusBadge={getStatusBadge} />
+          </TabsContent>
           <TabsContent value="lost">
-            <InventoryTable imeis={lostImeis} getStatusBadge={getStatusBadge} onEdit={setEditingImei} onDelete={setDeleteImei} showActions />
+            <InventoryTable imeis={lostImeis} getStatusBadge={getStatusBadge} onEdit={setEditingImei} onDelete={setDeleteImei} showActions isAdmin={isAdmin} />
           </TabsContent>
         </Tabs>
 
@@ -556,6 +621,10 @@ export default function Inventory() {
                     <Label>Total Commission</Label>
                     <Input type="number" value={editingImei.commission} onChange={(e) => setEditingImei({ ...editingImei, commission: parseFloat(e.target.value) || 0 })} />
                   </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Capacity</Label>
+                  <Input value={editingImei.capacity || ''} onChange={(e) => setEditingImei({ ...editingImei, capacity: e.target.value })} />
                 </div>
                 {isAdmin && editingImei.commissionConfig && (
                   <div className="space-y-3 p-3 bg-muted/30 rounded-lg border border-border">
@@ -672,9 +741,10 @@ interface InventoryTableProps {
   onEdit?: (imei: IMEI) => void;
   onDelete?: (imei: IMEI) => void;
   onSell?: (imei: IMEI) => void;
+  isAdmin?: boolean;
 }
 
-function InventoryTable({ imeis, getStatusBadge, showActions, onEdit, onDelete, onSell }: InventoryTableProps) {
+function InventoryTable({ imeis, getStatusBadge, showActions, onEdit, onDelete, onSell, isAdmin = false }: InventoryTableProps) {
   if (imeis.length === 0) {
     return (
       <Card className="border shadow-sm">
@@ -695,7 +765,6 @@ function InventoryTable({ imeis, getStatusBadge, showActions, onEdit, onDelete, 
               <th>#</th>
               <th>Model</th>
               <th>IMEI</th>
-              <th>Capacity</th>
               <th>Selling Price</th>
               <th>Commission</th>
               <th>Status</th>
@@ -708,7 +777,6 @@ function InventoryTable({ imeis, getStatusBadge, showActions, onEdit, onDelete, 
                 <td className="text-muted-foreground">{index + 1}</td>
                 <td className="font-medium">{item.productName}</td>
                 <td className="font-mono text-sm">{item.imei}</td>
-                <td>{item.capacity}</td>
                 <td className="font-medium text-foreground">Ksh {item.sellingPrice.toLocaleString()}</td>
                 <td className="text-success">Ksh {item.commission.toLocaleString()}</td>
                 <td>{getStatusBadge(item.status)}</td>
@@ -726,11 +794,11 @@ function InventoryTable({ imeis, getStatusBadge, showActions, onEdit, onDelete, 
                           <Pencil className="h-3 w-3" />
                         </Button>
                       )}
-                      {onDelete && (
-                        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => onDelete(item)}>
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      )}
+                            {onDelete && isAdmin && (
+                              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => onDelete(item)}>
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
                     </div>
                   </td>
                 )}

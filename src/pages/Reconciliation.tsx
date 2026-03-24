@@ -37,6 +37,10 @@ export default function Reconciliation() {
   const [selectedSource, setSelectedSource] = useState<'all' | PhoneSource>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [serverTotalCount, setServerTotalCount] = useState<number | null>(null);
+  const [serverTotalAmount, setServerTotalAmount] = useState<number | null>(null);
+  const [serverImeisSoldCount, setServerImeisSoldCount] = useState<number | null>(null);
+  const [serverImeisInStockCount, setServerImeisInStockCount] = useState<number | null>(null);
 
   // Get manager's region if they are a regional manager
   const managerRegion = currentUser?.role === 'regional_manager' ? currentUser?.region : null;
@@ -50,26 +54,31 @@ export default function Reconciliation() {
     try {
       setIsLoading(true);
 
-      // Load all sales
-      const salesResponse = await salesService.getAll();
+      // Load all sales (request large limit and prefer server-returned totals)
+      const salesResponse = await salesService.getAll({ limit: 100000 });
       let salesData = Array.isArray(salesResponse.data?.sales)
         ? salesResponse.data.sales
         : Array.isArray(salesResponse.data)
           ? salesResponse.data
           : [];
+      // Capture server totals if provided
+      const totalFromResp = (salesResponse as any)?.data?.total ?? (salesResponse as any)?.total ?? null;
+      const totalAmountFromResp = (salesResponse as any)?.data?.totalAmount ?? (salesResponse as any)?.totalAmount ?? null;
+      setServerTotalCount(typeof totalFromResp === 'number' ? totalFromResp : null);
+      setServerTotalAmount(typeof totalAmountFromResp === 'number' ? totalAmountFromResp : null);
       // Filter by manager's region if regional manager
       if (managerRegion) {
         salesData = salesData.filter((s: any) => s.region === managerRegion);
       }
-      // Normalize sales data to ensure source field is present and lowercase
+      // Normalize sales data to ensure source field is present and lowercase (do NOT default to a company)
       const normalizedSales = salesData.map((s: any) => ({
         ...s,
-        source: (s.source || s.phoneSource || 'watu').toLowerCase(), // Ensure lowercase for consistent comparison
+        source: (s.source || s.phoneSource || '').toLowerCase(),
       }));
       setSales(normalizedSales);
 
-      // Load all IMEIs
-      const imeisResponse = await imeiService.getAll();
+      // Load all IMEIs (request large limit and capture server-side counts)
+      const imeisResponse = await imeiService.getAll({ limit: 100000 });
       let imeisData = Array.isArray(imeisResponse.data?.imeis)
         ? imeisResponse.data.imeis
         : Array.isArray(imeisResponse.data)
@@ -90,14 +99,14 @@ export default function Reconciliation() {
         };
         const status = statusMap[i.status?.toLowerCase()] || i.status || 'IN_STOCK';
         // Normalize source: use lowercase to ensure consistency
-        const source = (i.source || i.phoneSource || 'watu').toLowerCase() as PhoneSource;
+        const source = ((i.source || i.phoneSource || '') as string).toLowerCase() as PhoneSource;
         
         return {
           id: i.id || i._id,
           imei: i.imei,
           productId: i.productId?._id || i.productId || '',
           productName: i.productId?.name || i.productName || 'Unknown',
-          capacity: i.capacity || '64GB',
+          capacity: i.capacity || i.capacityDetail || i.productId?.capacity || '',
           status,
           sellingPrice: i.price || i.sellingPrice || 0,
           commission: i.commissionConfig ? 
@@ -109,6 +118,13 @@ export default function Reconciliation() {
           registeredAt: i.registeredAt ? new Date(i.registeredAt) : new Date(),
         };
       });
+      // Prefer server-provided imei counts when available
+      const imeisTotalSoldFromResp = (imeisResponse as any)?.data?.soldCount ?? (imeisResponse as any)?.soldCount ?? null;
+      const imeisTotalInStockFromResp = (imeisResponse as any)?.data?.inStockCount ?? (imeisResponse as any)?.inStockCount ?? null;
+      const soldCount = normalizedImeis.filter(i => i.status === 'SOLD').length;
+      const inStockCount = normalizedImeis.filter(i => i.status === 'IN_STOCK').length;
+      setServerImeisSoldCount(typeof imeisTotalSoldFromResp === 'number' ? imeisTotalSoldFromResp : soldCount);
+      setServerImeisInStockCount(typeof imeisTotalInStockFromResp === 'number' ? imeisTotalInStockFromResp : inStockCount);
       setImeis(normalizedImeis);
 
       // Load all commissions
@@ -162,19 +178,19 @@ export default function Reconciliation() {
   const netRevenue = totalSalesAmount - totalCommissions;
 
   // Company-wise breakdown
-  const companyBreakdown = {
+    const companyBreakdown = {
     watu: {
       // Use filteredSales so company totals reflect region and selected source
-      sales: filteredSales.filter(s => (s.source?.toLowerCase() || 'watu') === 'watu' || getSaleSource(s.imei)?.toLowerCase() === 'watu'),
-      imeis: imeis.filter(i => (i.source?.toLowerCase() || 'watu') === 'watu'),
+      sales: filteredSales.filter(s => (s.source?.toLowerCase() === 'watu') || getSaleSource(s.imei)?.toLowerCase() === 'watu'),
+      imeis: imeis.filter(i => (i.source?.toLowerCase() === 'watu')),
     },
     mogo: {
-      sales: filteredSales.filter(s => (s.source?.toLowerCase() || 'watu') === 'mogo' || getSaleSource(s.imei)?.toLowerCase() === 'mogo'),
-      imeis: imeis.filter(i => (i.source?.toLowerCase() || 'watu') === 'mogo'),
+      sales: filteredSales.filter(s => (s.source?.toLowerCase() === 'mogo') || getSaleSource(s.imei)?.toLowerCase() === 'mogo'),
+      imeis: imeis.filter(i => (i.source?.toLowerCase() === 'mogo')),
     },
     onfon: {
-      sales: filteredSales.filter(s => (s.source?.toLowerCase() || 'watu') === 'onfon' || getSaleSource(s.imei)?.toLowerCase() === 'onfon'),
-      imeis: imeis.filter(i => (i.source?.toLowerCase() || 'watu') === 'onfon'),
+      sales: filteredSales.filter(s => (s.source?.toLowerCase() === 'onfon') || getSaleSource(s.imei)?.toLowerCase() === 'onfon'),
+      imeis: imeis.filter(i => (i.source?.toLowerCase() === 'onfon')),
     },
   };
 
@@ -276,9 +292,13 @@ export default function Reconciliation() {
     }
   };
 
+  const inStockTotal = imeis.filter(i => i.status === 'IN_STOCK').length;
+
   const reconciliationItems = [
-    { label: 'Total Sales', value: `Ksh ${totalSalesAmount.toLocaleString()}`, ok: true },
-    { label: 'Phone Sales', value: `${phoneSales.length} units`, ok: true },
+    { label: 'Revenue', value: `Ksh ${(serverTotalAmount ?? totalSalesAmount).toLocaleString()}`, ok: true },
+    { label: 'Sales', value: `${(serverTotalCount ?? filteredSales.length)}`, ok: true },
+    { label: 'Phones Sold', value: `${(serverImeisSoldCount ?? phoneSales.length)} units`, ok: true },
+    { label: 'In Stock', value: `${serverImeisInStockCount ?? inStockTotal}`, ok: true },
     { label: 'Accessory Sales', value: `${accessorySales.length} units`, ok: true },
     { label: 'M-PESA Transactions', value: `Ksh ${mpesaSales.reduce((s, sale) => s + sale.saleAmount, 0).toLocaleString()}`, ok: mpesaSales.every(s => s.paymentReference) },
     { label: 'Cash Transactions', value: `Ksh ${cashSales.reduce((s, sale) => s + sale.saleAmount, 0).toLocaleString()}`, ok: true },
@@ -286,6 +306,7 @@ export default function Reconciliation() {
     { label: 'Total Commissions', value: `Ksh ${totalCommissions.toLocaleString()}`, ok: true },
     { label: 'Net Revenue', value: `Ksh ${netRevenue.toLocaleString()}`, ok: true },
   ];
+
 
   const handleExportReconciliation = () => {
     // Prepare sales data for export
@@ -311,11 +332,13 @@ export default function Reconciliation() {
     const summaryData = [
       { metric: 'Report Date', value: new Date().toLocaleDateString() },
       { metric: 'Source Filter', value: selectedSource === 'all' ? 'All Sources' : selectedSource },
-      { metric: 'Total Sales', value: totalSalesAmount },
+      { metric: 'Total Sales Amount', value: serverTotalAmount ?? totalSalesAmount },
+      { metric: 'Sales Count', value: serverTotalCount ?? filteredSales.length },
       { metric: 'Total VAT', value: totalVAT },
       { metric: 'Total Commissions', value: totalCommissions },
       { metric: 'Net Revenue', value: netRevenue },
-      { metric: 'Phone Sales Count', value: phoneSales.length },
+      { metric: 'Phone Sales Count', value: serverImeisSoldCount ?? phoneSales.length },
+      { metric: 'In Stock Count', value: serverImeisInStockCount ?? inStockTotal },
       { metric: 'Accessory Sales Count', value: accessorySales.length },
       { metric: 'M-PESA Transactions', value: mpesaSales.length },
       { metric: 'Cash Transactions', value: cashSales.length },

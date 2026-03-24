@@ -53,6 +53,8 @@ import type { Sale } from '@/types';
 export interface SalesListParams {
   foId?: string;
   teamLeaderId?: string;
+  soldBy?: string;
+  region?: string;
   regionalManagerId?: string;
   startDate?: string;
   endDate?: string;
@@ -76,6 +78,15 @@ export interface CreateSaleRequest {
   foName?: string;
   foCode?: string;
   notes?: string;
+  // Express sale fields
+  saleType?: 'NORMAL' | 'EXPRESS';
+  assignedRmId?: string;
+  assignedTlId?: string;
+  assignedFoId?: string;
+  rmCommission?: number;
+  tlCommission?: number;
+  foCommission?: number;
+  soldByAdmin?: boolean;
 }
 
 export interface SalesListResponse {
@@ -112,6 +123,8 @@ export const salesService = {
     const queryParams: Record<string, string> = {};
     
     if (params?.foId) queryParams.foId = params.foId;
+    if (params?.soldBy) queryParams.soldBy = params.soldBy;
+    if (params?.region) queryParams.region = params.region;
     if (params?.teamLeaderId) queryParams.teamLeaderId = params.teamLeaderId;
     if (params?.startDate) queryParams.startDate = params.startDate;
     if (params?.endDate) queryParams.endDate = params.endDate;

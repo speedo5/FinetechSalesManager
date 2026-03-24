@@ -167,7 +167,7 @@ exports.createSale = async (req, res, next) => {
 
     // Generate receipt number
     const count = await Sale.countDocuments({});
-    const receiptNumber = `RCP-${String(2000 + count + 1).padStart(6, '0')}`;
+    const receiptNumber = `RCP-${String(3000 + count + 1).padStart(6, '0')}`;
 
     // PHONE SALE (with IMEI)
     if (imeiId) {

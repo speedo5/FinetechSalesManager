@@ -91,7 +91,7 @@ export const authService = {
    * Change the current user's password
    */
   changePassword: async (data: ChangePasswordRequest): Promise<ApiResponse<void>> => {
-    return apiClient.put<void>('/auth/change-password', data);
+    return apiClient.put<void>('/auth/update-password', data);
   },
 
   /**

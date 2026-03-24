@@ -4,6 +4,7 @@ import { mockIMEIs, mockSales, mockCommissions, mockNotifications, mockActivityL
 import { productService } from '@/services/productService';
 import { imeiService } from '@/services/imeiService';
 import { authService } from '@/services/authService';
+import { tokenManager } from '@/services/apiClient';
 import { commissionService } from '@/services/commissionService';
 import { salesService } from '@/services/salesService';
 import { activityLogService } from '@/services/activityLogService';
@@ -15,6 +16,7 @@ import { activityLogService } from '@/services/activityLogService';
 interface AppContextType {
   currentUser: User | null;
   setCurrentUser: (user: User | null) => void;
+  isSessionLoading: boolean;
   users: User[];
   setUsers: React.Dispatch<React.SetStateAction<User[]>>;
   imeis: IMEI[];
@@ -34,6 +36,7 @@ interface AppContextType {
   userStockBalances: UserStockBalance[];
   setUserStockBalances: React.Dispatch<React.SetStateAction<UserStockBalance[]>>;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
   addNotification: (notification: Omit<Notification, 'id' | 'createdAt' | 'read'>) => void;
   logActivity: (type: ActivityType, action: string, description: string, metadata?: Record<string, any>) => void;
   allocateStock: (allocation: Omit<StockAllocation, 'id' | 'createdAt' | 'status'>) => { success: boolean; error?: string };
@@ -49,6 +52,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [imeis, setImeis] = useState<IMEI[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -58,6 +62,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [stockAllocations, setStockAllocations] = useState<StockAllocation[]>([]);
   const [userStockBalances, setUserStockBalances] = useState<UserStockBalance[]>([]);
+
+  // Restore session from localStorage on app mount
+  useEffect(() => {
+    const restoreSession = async () => {
+      const token = tokenManager.get();
+      if (token) {
+        try {
+          const response = await authService.getCurrentUser();
+          if (response.success && response.data) {
+            const foCodeVal = response.data.foCode ?? response.data.fo_code ?? response.data.FOCode ?? response.data.focode;
+            const userData: User = {
+              id: response.data.id || response.data._id,
+              _id: response.data._id,
+              name: response.data.name,
+              email: response.data.email,
+              password: '',
+              role: response.data.role,
+              region: response.data.region,
+              phone: response.data.phone,
+              foCode: foCodeVal,
+              createdAt: response.data.createdAt ? new Date(response.data.createdAt) : new Date(),
+              isActive: response.data.isActive !== false,
+              teamLeaderId: response.data.teamLeaderId,
+              regionalManagerId: response.data.regionalManagerId,
+            };
+            setCurrentUser(userData);
+          } else {
+            // Token is invalid, clear it
+            tokenManager.remove();
+          }
+        } catch (error) {
+          console.warn('Failed to restore session from token:', error);
+          tokenManager.remove();
+        }
+      }
+      // Session restoration complete
+      setIsSessionLoading(false);
+    };
+
+    restoreSession();
+  }, []);
 
   // Fetch initial data from API on mount
   useEffect(() => {
@@ -109,10 +154,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.warn('Failed to fetch products from API:', err?.message || err);
         }
 
-        // IMEIs (load all recent IMEIs - UI components will filter allocated ones as necessary)
+        // IMEIs (load all recent IMEIs - request a large limit to avoid default pagination fallback)
         try {
-          const imeisRes = await imeiService.getAll();
-          const fetchedImeis = Array.isArray(imeisRes) ? imeisRes : (imeisRes as any)?.data || (imeisRes as any)?.imeis || [];
+          const imeisRes = await imeiService.getAll({ limit: 100000 });
+          const rawImeis = Array.isArray(imeisRes) ? imeisRes : (imeisRes as any)?.data || (imeisRes as any)?.imeis || [];
+          // Normalize IMEI objects so UI can always use `id` (map `_id` -> `id` when backend returns Mongo _id)
+          const fetchedImeis = (rawImeis || []).map((i: any) => ({ ...i, id: i.id || i._id }));
           if (fetchedImeis && fetchedImeis.length > 0) setImeis(fetchedImeis as any);
         } catch (err) {
           console.warn('Failed to fetch IMEIs from API:', err?.message || err);
@@ -131,6 +178,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const response = await authService.login({ email, password });
       
       if (response.success && response.data) {
+        const foCodeVal = response.data.user.foCode ?? response.data.user.fo_code ?? response.data.user.FOCode ?? response.data.user.focode;
         const userData: User = {
           id: response.data.user.id || response.data.user._id,
           _id: response.data.user._id,
@@ -140,7 +188,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           role: response.data.user.role,
           region: response.data.user.region,
           phone: response.data.user.phone,
-          foCode: response.data.user.foCode,
+          foCode: foCodeVal,
           createdAt: response.data.user.createdAt ? new Date(response.data.user.createdAt) : new Date(),
           isActive: response.data.user.isActive !== false,
           teamLeaderId: response.data.user.teamLeaderId,
@@ -154,6 +202,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       return { success: false, error: error.message || 'Login failed' };
     }
+  };
+
+  const logout = (): void => {
+    authService.logout();
+    setCurrentUser(null);
   };
 
   const addNotification = (notification: Omit<Notification, 'id' | 'createdAt' | 'read'>) => {
@@ -431,6 +484,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         currentUser,
         setCurrentUser,
+        isSessionLoading,
         users,
         setUsers,
         imeis,
@@ -450,6 +504,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         userStockBalances,
         setUserStockBalances,
         login,
+        logout,
         addNotification,
         logActivity,
         allocateStock,
@@ -466,10 +521,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useApp() {
+export const useApp = () => {
   const context = useContext(AppContext);
   if (context === undefined) {
     throw new Error('useApp must be used within an AppProvider');
   }
   return context;
-}
+};

@@ -187,6 +187,12 @@ export interface Sale {
   sellerName?: string;
   sellerEmail?: string;
   source?: PhoneSource; // Company the phone was sold from
+  saleType?: 'NORMAL' | 'EXPRESS'; // Type of sale
+  assignedRmId?: string; // For express sales
+  assignedTlId?: string; // For express sales
+  assignedFoId?: string; // For express sales
+  soldByAdmin?: boolean; // For express sales
+  processedBy?: string; // Admin who processed the express sale
   // Client details
   clientName?: string;
   clientPhone?: string;

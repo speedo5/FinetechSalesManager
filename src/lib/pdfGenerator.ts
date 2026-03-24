@@ -3,15 +3,15 @@ import autoTable from 'jspdf-autotable';
 import { Sale, Commission, Product, IMEI } from '@/types';
 import { format } from 'date-fns';
 
-// Receipt counter starting at 2000
-let receiptCounter = 2000;
+// Receipt counter starting at 3000 (as per requirements)
+let receiptCounter = 3000;
 
 export function getNextReceiptNumber(): number {
   return receiptCounter++;
 }
 
 export function generateReceiptNumber(salesCount: number): string {
-  return String(2000 + salesCount);
+  return `RCP-${String(3000 + salesCount).padStart(6, '0')}`;
 }
 
 export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
@@ -34,13 +34,25 @@ export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
     doc.text(text, pageWidth / 2, yPos, { align: 'center' });
   };
 
+  // Normalize receipt number to 3000-series
+  const normalizeReceipt = (raw?: string) => {
+    if (!raw) return `RCP-${String(3000).padStart(6, '0')}`;
+    const s = String(raw);
+    const match = s.match(/(\d+)/);
+    if (!match) return s;
+    let num = parseInt(match[1], 10);
+    if (num < 3000) num = num + 1000;
+    return `RCP-${String(num).padStart(6, '0')}`;
+  };
+
   // ===== RECEIPT BADGE =====
   doc.setFillColor(navy[0], navy[1], navy[2]);
-  doc.roundedRect(pageWidth / 2 - 12, y, 24, 6, 1, 1, 'F');
+  doc.roundedRect(pageWidth / 2 - 20, y, 40, 6, 1, 1, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.text('RECEIPT', pageWidth / 2, y + 4.2, { align: 'center' });
+  const receiptNo = normalizeReceipt(sale.etrReceiptNo || sale.receiptNumber);
+  doc.text(`RECEIPT ${receiptNo}`, pageWidth / 2, y + 4.2, { align: 'center' });
   y += 10;
 
   // ===== COMPANY NAME =====
@@ -68,7 +80,7 @@ export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.text(`Pin A015773214N`, margin, y);
-  doc.text(`Date ${format(new Date(sale.createdAt), 'dd/MM/yyyy')}`, pageWidth - margin, y, { align: 'right' });
+  doc.text(`Date ${format(new Date(sale.createdAt), 'dd/MM/yyyy HH:mm:ss')}`, pageWidth - margin, y, { align: 'right' });
   y += 5;
 
   // ===== CLIENT SECTION HEADER =====
@@ -107,11 +119,11 @@ export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   
-  // 4 column layout with wider spacing
-  const col1 = margin + 2;       // Qty
-  const col2 = margin + 12;      // Description
-  const col3 = pageWidth - margin - 22;  // @
-  const col4 = pageWidth - margin - 6;   // Ksh Cts
+  // 4 column layout with wider spacing for description
+  const col1 = margin + 2;       // Qty (narrow)
+  const col2 = margin + 10;      // Description (wider)
+  const col3 = pageWidth - margin - 16;  // @ (moved slightly right)
+  const col4 = pageWidth - margin - 2;   // Ksh Cts
   
   doc.text('Qty', col1, y + 5);
   doc.text('Description', col2, y + 5);
@@ -143,7 +155,15 @@ export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
     y += rowHeight;
   }
 
-  // Row 3: Unit price indicator
+  // Row 3: Capacity (if available)
+  const capacity = (sale as any).capacity || (sale as any).imeiCapacity;
+  if (capacity) {
+    doc.setFontSize(8);
+    doc.text(`Capacity: ${String(capacity)}`, col2, y + 4);
+    y += rowHeight;
+  }
+
+  // Row 4: Unit price indicator
   doc.setFontSize(8);
   doc.text(`@ ${priceStr}`, col2, y + 4);
   y += rowHeight;
@@ -159,8 +179,8 @@ export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
   doc.rect(margin, tableStartY, pageWidth - margin * 2, tableHeight);
   
   // Vertical lines (3 dividers for 4 columns)
-  doc.line(margin + 10, tableStartY + 7, margin + 10, tableEndY);  // After Qty
-  doc.line(col3 - 3, tableStartY + 7, col3 - 3, tableEndY);  // Before @
+  doc.line(margin + 8, tableStartY + 7, margin + 8, tableEndY);  // After Qty
+  doc.line(col3 - 2, tableStartY + 7, col3 - 2, tableEndY);  // Before @
 
   y += 4;
 
@@ -169,16 +189,15 @@ export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
   doc.line(margin, y, pageWidth - margin, y);
   y += 4;
 
-  // E.&.O.E and Receipt No - Receipt number starts from 2000
+  // E.&.O.E and Receipt No
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(0, 0, 0);
   doc.text('E.&.O.E', margin, y);
   
-  // Receipt number in red - starts from 2000
+  // Receipt number in red
   doc.setTextColor(255, 0, 0);
   doc.setFont('helvetica', 'bold');
-  const receiptNo = sale.etrReceiptNo?.replace('ETR-', '').replace(/-/g, '') || '2000';
   doc.text(`No. ${receiptNo}`, margin + 14, y);
   y += 6;
 
@@ -200,12 +219,12 @@ export function generateSaleReceipt(sale: Sale, sellerName?: string): void {
   doc.setTextColor(50, 50, 50);
   
   if (foCode && foCode !== '') {
-    doc.text(`FO Code: ${foCode}`, margin, y);
+    centerText(`FO Code: ${foCode}`, y, 7, [50, 50, 50]);
     y += 3.5;
   }
   
   if (source && source !== '') {
-    doc.text(`Source: ${source.toUpperCase()}`, margin, y);
+    centerText(`Source: ${source.toUpperCase()}`, y, 7, [50, 50, 50]);
     y += 3.5;
   }
   

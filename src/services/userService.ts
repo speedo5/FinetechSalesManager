@@ -79,35 +79,85 @@ export const userService = {
    */
   getAll: async (params?: UserListParams): Promise<ApiResponse<UserListResponse>> => {
     const queryParams: Record<string, string> = {};
-    
+
     if (params?.role) queryParams.role = params.role;
     if (params?.region) queryParams.region = params.region;
     if (params?.teamLeaderId) queryParams.teamLeaderId = params.teamLeaderId;
     if (params?.page) queryParams.page = params.page.toString();
     if (params?.limit) queryParams.limit = params.limit.toString();
-    
-    return apiClient.get<UserListResponse>('/users', queryParams);
+
+    const res = await apiClient.get<any>('/users', queryParams);
+
+    // Normalize user shape so callers can reliably read `id` and `foCode`
+    if (res && res.success && res.data) {
+      const normalizeUser = (u: any) => ({
+        ...u,
+        id: u.id || u._id,
+        foCode: u.foCode ?? u.fo_code ?? u.FOCode ?? u.focode ?? undefined,
+      });
+
+      // data may be in various shapes: array, { users: [] }, or { data: [] }
+      if (Array.isArray(res.data)) {
+        res.data = res.data.map(normalizeUser);
+      } else if (Array.isArray((res.data as any).users)) {
+        (res.data as any).users = (res.data as any).users.map(normalizeUser);
+      } else if (Array.isArray((res.data as any).data)) {
+        (res.data as any).data = (res.data as any).data.map(normalizeUser);
+      } else if (typeof res.data === 'object') {
+        // Single user object
+        res.data = normalizeUser(res.data);
+      }
+    }
+
+    return res as ApiResponse<UserListResponse>;
   },
 
   /**
    * Get a single user by ID
    */
   getById: async (id: string): Promise<ApiResponse<User>> => {
-    return apiClient.get<User>(`/users/${id}`);
+    const res = await apiClient.get<any>(`/users/${id}`);
+    if (res && res.success && res.data) {
+      const u = res.data;
+      res.data = {
+        ...u,
+        id: u.id || u._id,
+        foCode: u.foCode ?? u.fo_code ?? u.FOCode ?? u.focode ?? undefined,
+      };
+    }
+    return res as ApiResponse<User>;
   },
 
   /**
    * Create a new user
    */
   create: async (userData: CreateUserRequest): Promise<ApiResponse<User>> => {
-    return apiClient.post<User>('/users', userData);
+    const res = await apiClient.post<any>('/users', userData);
+    if (res && res.success && res.data) {
+      const u = res.data;
+      res.data = {
+        ...u,
+        id: u.id || u._id,
+        foCode: u.foCode ?? u.fo_code ?? u.FOCode ?? u.focode ?? undefined,
+      };
+    }
+    return res as ApiResponse<User>;
   },
 
   /**
    * Update an existing user
    */
   update: async (id: string, userData: UpdateUserRequest): Promise<ApiResponse<User>> => {
-    return apiClient.put<User>(`/users/${id}`, userData);
+    const res = await apiClient.put<any>(`/users/${id}`, userData);
+    if (res && res.success && res.data) {
+      const u = res.data;
+      res.data = {
+        ...u,
+        id: u.id || u._id,
+        foCode: u.foCode ?? u.fo_code ?? u.FOCode ?? u.focode ?? undefined,
+      };
+    }
+    return res as ApiResponse<User>;
   },
 
   /**

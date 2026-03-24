@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
-import { Users, TrendingUp, DollarSign, Phone, Search, Download, Calendar, Target, Award, Package, ShoppingCart } from 'lucide-react';
+import { Users, TrendingUp, DollarSign, Phone, Search, Download, Calendar, Target, Award, Package, ShoppingCart, List, Grid } from 'lucide-react';
 import { exportSales } from '@/lib/pdfGenerator';
 import { userService } from '@/services/userService';
 import { salesService } from '@/services/salesService';
@@ -27,6 +27,8 @@ const TeamLeaderDashboard = () => {
   const [teamCommissions, setTeamCommissions] = useState<any[]>([]);
   const [allocatedStock, setAllocatedStock] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [foView, setFoView] = useState<'list' | 'grid'>('grid');
+  const [commissionView, setCommissionView] = useState<'list' | 'grid'>('grid');
 
   // Load team members and statistics from APIs
   useEffect(() => {
@@ -48,10 +50,25 @@ const TeamLeaderDashboard = () => {
           ? fosResponse 
           : (fosResponse as any)?.data?.users || (fosResponse as any)?.data || [];
         
-        // Remove duplicates by id
-        const uniqueFOs = Array.from(
+        // Remove duplicates and filter to only show FOs assigned to this team leader
+        const allFOs = Array.from(
           new Map(fos.map((fo: any) => [fo.id || fo._id, fo])).values()
         );
+        
+        // Filter to only FOs assigned to this team leader
+        const uniqueFOs = allFOs.filter((fo: any) => {
+          // Handle both cases: teamLeaderId as object (populated) or as string (ID)
+          const foTeamLeaderId = typeof fo.teamLeaderId === 'object' 
+            ? (fo.teamLeaderId?._id || fo.teamLeaderId?.id)
+            : (fo.teamLeaderId || (fo as any).team_leader_id);
+          
+          const currentUserId = currentUser.id || currentUser._id;
+          const result = foTeamLeaderId === currentUserId;
+          
+          console.log(`🔍 FO ${fo.name}: foTeamLeaderId=${foTeamLeaderId}, currentUserId=${currentUserId}, match=${result}`);
+          
+          return result;
+        });
         
         setMyFOs(uniqueFOs);
 
@@ -331,52 +348,95 @@ const TeamLeaderDashboard = () => {
 
       {/* FO Performance Rankings */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex items-center">
           <CardTitle className="flex items-center gap-2">
             <Award className="h-5 w-5 text-amber-500" />
             FO Performance Rankings
           </CardTitle>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant={foView === 'list' ? 'default' : 'outline'} onClick={() => setFoView('list')}>
+              <List className="h-4 w-4" />
+            </Button>
+            <Button size="sm" variant={foView === 'grid' ? 'default' : 'outline'} onClick={() => setFoView('grid')}>
+              <Grid className="h-4 w-4" />
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {foPerformance.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">No field officers assigned to your team yet.</p>
           ) : (
-            <div className="space-y-4">
-              {foPerformance.map((fo, index) => (
-                <div 
-                  key={fo.id} 
-                  className="flex items-center justify-between p-4 rounded-lg bg-muted/30 border border-border/50"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold text-sm ${
-                      index === 0 ? 'bg-amber-500 text-white' : 
-                      index === 1 ? 'bg-gray-400 text-white' : 
-                      index === 2 ? 'bg-amber-700 text-white' : 'bg-muted text-muted-foreground'
-                    }`}>
-                      {index + 1}
+            // View toggle: list or grid
+            foView === 'list' ? (
+              <div className="space-y-4">
+                {foPerformance.map((fo, index) => (
+                  <div 
+                    key={fo.id} 
+                    className="flex items-center justify-between p-4 rounded-lg bg-muted/30 border border-border/50"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                        index === 0 ? 'bg-amber-500 text-white' : 
+                        index === 1 ? 'bg-gray-400 text-white' : 
+                        index === 2 ? 'bg-amber-700 text-white' : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {index + 1}
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">{fo.name}</p>
+                        <p className="text-sm text-muted-foreground">{fo.foCode || 'No code'} • {fo.phone || 'No phone'}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-foreground">{fo.name}</p>
-                      <p className="text-sm text-muted-foreground">{fo.foCode || 'No code'} • {fo.phone || 'No phone'}</p>
+                    <div className="grid grid-cols-3 gap-8 text-right">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Sales</p>
+                        <p className="font-semibold text-foreground">Ksh {fo.totalSales.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Phones</p>
+                        <p className="font-semibold text-foreground">{fo.phonesSold}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Commissions</p>
+                        <p className="font-semibold text-foreground">Ksh {fo.totalCommissions.toLocaleString()}</p>
+                      </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-8 text-right">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Sales</p>
-                      <p className="font-semibold text-foreground">Ksh {fo.totalSales.toLocaleString()}</p>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {foPerformance.map((fo, index) => (
+                  <div key={fo.id} className="p-4 rounded-lg border border-border bg-muted/20">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <p className="font-semibold text-foreground">{fo.name}</p>
+                        <p className="text-sm text-muted-foreground">{fo.foCode || '-'}</p>
+                      </div>
+                      <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                        index === 0 ? 'bg-amber-500 text-white' : 
+                        index === 1 ? 'bg-gray-400 text-white' : 
+                        index === 2 ? 'bg-amber-700 text-white' : 'bg-muted text-muted-foreground'
+                      }`}>{index + 1}</div>
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Phones</p>
-                      <p className="font-semibold text-foreground">{fo.phonesSold}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Commissions</p>
-                      <p className="font-semibold text-foreground">Ksh {fo.totalCommissions.toLocaleString()}</p>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total Sales</span>
+                        <span className="font-medium">Ksh {fo.totalSales.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Phones Sold</span>
+                        <span className="font-medium">{fo.phonesSold}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Commissions</span>
+                        <span className="font-medium">Ksh {fo.totalCommissions.toLocaleString()}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )
           )}
         </CardContent>
       </Card>
@@ -473,44 +533,82 @@ const TeamLeaderDashboard = () => {
             Team Commission Summary
           </CardTitle>
         </CardHeader>
+        <div className="px-4 mt-2 flex items-center">
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant={commissionView === 'list' ? 'default' : 'outline'} onClick={() => setCommissionView('list')}>
+              <List className="h-4 w-4" />
+            </Button>
+            <Button size="sm" variant={commissionView === 'grid' ? 'default' : 'outline'} onClick={() => setCommissionView('grid')}>
+              <Grid className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
         <CardContent>
           {foPerformance.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">No commission data available.</p>
           ) : (
-            <div className="rounded-md border overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Field Officer</TableHead>
-                    <TableHead>FO Code</TableHead>
-                    <TableHead className="text-right">Total Earned</TableHead>
-                    <TableHead className="text-right">Pending Payout</TableHead>
-                    <TableHead className="text-right">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {foPerformance.map((fo: any) => (
-                    <TableRow key={fo.id || fo._id || fo.name}>
-                      <TableCell className="font-medium">{fo.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{fo.foCode || '-'}</TableCell>
-                      <TableCell className="text-right font-semibold">Ksh {fo.totalCommissions.toLocaleString()}</TableCell>
-                      <TableCell className="text-right">
-                        {fo.unpaidCommissions > 0 ? (
-                          <span className="text-amber-600 font-medium">Ksh {fo.unpaidCommissions.toLocaleString()}</span>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant={fo.unpaidCommissions > 0 ? 'outline' : 'default'}>
-                          {fo.unpaidCommissions > 0 ? 'Pending' : 'All Paid'}
-                        </Badge>
-                      </TableCell>
+            commissionView === 'list' ? (
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Field Officer</TableHead>
+                      <TableHead>FO Code</TableHead>
+                      <TableHead className="text-right">Total Earned</TableHead>
+                      <TableHead className="text-right">Pending Payout</TableHead>
+                      <TableHead className="text-right">Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {foPerformance.map((fo: any) => (
+                      <TableRow key={fo.id || fo._id || fo.name}>
+                        <TableCell className="font-medium">{fo.name}</TableCell>
+                        <TableCell className="text-muted-foreground">{fo.foCode || '-'}</TableCell>
+                        <TableCell className="text-right font-semibold">Ksh {fo.totalCommissions.toLocaleString()}</TableCell>
+                        <TableCell className="text-right">
+                          {fo.unpaidCommissions > 0 ? (
+                            <span className="text-amber-600 font-medium">Ksh {fo.unpaidCommissions.toLocaleString()}</span>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={fo.unpaidCommissions > 0 ? 'outline' : 'default'}>
+                            {fo.unpaidCommissions > 0 ? 'Pending' : 'All Paid'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {foPerformance.map((fo: any) => (
+                  <div key={fo.id || fo._id || fo.name} className="p-4 rounded-lg border border-border bg-muted/20">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <p className="font-semibold text-foreground">{fo.name}</p>
+                        <p className="text-sm text-muted-foreground">{fo.foCode || '-'}</p>
+                      </div>
+                      <Badge variant={fo.unpaidCommissions > 0 ? 'outline' : 'default'}>
+                        {fo.unpaidCommissions > 0 ? 'Pending' : 'All Paid'}
+                      </Badge>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total Earned</span>
+                        <span className="font-medium">Ksh {fo.totalCommissions.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Pending Payout</span>
+                        <span className="font-medium">{fo.unpaidCommissions > 0 ? `Ksh ${fo.unpaidCommissions.toLocaleString()}` : '-'}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
           )}
         </CardContent>
       </Card>

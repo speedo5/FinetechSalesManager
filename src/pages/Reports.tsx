@@ -44,7 +44,7 @@ import { regionService } from '@/services/regionService';
 import { toast } from 'sonner';
 
 export default function Reports() {
-  const { sales, commissions, imeis, products, users, currentUser } = useApp();
+  const { currentUser } = useApp();
   
   // State for API-loaded data
   const [loadedSales, setLoadedSales] = useState<any[]>([]);
@@ -54,6 +54,8 @@ export default function Reports() {
   const [loadedImeis, setLoadedImeis] = useState<any[]>([]);
   const [registeredRegions, setRegisteredRegions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [serverTotalCount, setServerTotalCount] = useState<number | null>(null);
+  const [serverTotalAmount, setServerTotalAmount] = useState<number | null>(null);
   
   // Check if user can generate reports (Admin or Regional Manager only)
   const canGenerateReports = currentUser?.role === 'admin' || currentUser?.role === 'regional_manager';
@@ -64,8 +66,11 @@ export default function Reports() {
   // Date range state - default to last 4 weeks
   const [startDate, setStartDate] = useState<Date>(startOfWeek(subWeeks(new Date(), 4), { weekStartsOn: 1 }));
   const [endDate, setEndDate] = useState<Date>(new Date());
+  // Selected regions (Admin can select multiple, RM gets their own region only)
+  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+  const [regionsInitialized, setRegionsInitialized] = useState(false);
   
-  // Load reports data from API on mount
+  // Load reports data from API when filters change
   useEffect(() => {
     const loadReportsData = async () => {
       try {
@@ -83,14 +88,81 @@ export default function Reports() {
           setRegisteredRegions([]);
         }
         
-        // Fetch sales
-        const salesRes = await salesService.getAll();
-        let salesData: any[] = [];
-        if (salesRes.success && salesRes.data) {
-          salesData = Array.isArray(salesRes.data) ? salesRes.data : (salesRes.data as any).sales || [];
+        // Fetch sales (request totals for current date range & selected regions)
+        const baseParams: any = {};
+        if (startDate) {
+          const sd = new Date(startDate);
+          sd.setHours(0, 0, 0, 0);
+          baseParams.startDate = sd.toISOString();
         }
-        console.log('📊 Sales loaded:', salesData.length);
-        setLoadedSales(salesData);
+        if (endDate) {
+          const ed = new Date(endDate);
+          ed.setHours(23, 59, 59, 999);
+          baseParams.endDate = ed.toISOString();
+        }
+
+        // If viewing as Regional Manager, request only their region
+        if (userRegion) {
+          const params = { ...baseParams, region: userRegion };
+          const salesRes = await salesService.getAll(params);
+          let salesData: any[] = [];
+          if (salesRes && salesRes.success) {
+            salesData = Array.isArray(salesRes.data) ? salesRes.data : (salesRes.data as any).sales || [];
+            const s = salesRes as any;
+            const src = s.data ?? s;
+            const tCount = src?.total ?? s?.total ?? src?.count ?? s?.count ?? null;
+            const tAmt = src?.totalAmount ?? s?.totalAmount ?? src?.total_amount ?? s?.total_amount ?? null;
+            if (typeof tCount === 'number') setServerTotalCount(Number(tCount));
+            if (typeof tAmt === 'number') setServerTotalAmount(Number(tAmt));
+          }
+          console.log('📊 Sales loaded (RM):', salesData.length);
+          setLoadedSales(salesData);
+        } else {
+          // Admin: selectedRegions controls which regions to include. If none selected, empty result
+          if (!selectedRegions || selectedRegions.length === 0) {
+            setLoadedSales([]);
+            setServerTotalCount(0);
+            setServerTotalAmount(0);
+          } else if (registeredRegions.length > 0 && selectedRegions.length === registeredRegions.length) {
+            // All regions selected: request without region filter to get complete totals
+            const salesRes = await salesService.getAll(baseParams);
+            let salesData: any[] = [];
+            if (salesRes && salesRes.success) {
+              salesData = Array.isArray(salesRes.data) ? salesRes.data : (salesRes.data as any).sales || [];
+              const s = salesRes as any;
+              const src = s.data ?? s;
+              const tCount = src?.total ?? s?.total ?? src?.count ?? s?.count ?? null;
+              const tAmt = src?.totalAmount ?? s?.totalAmount ?? src?.total_amount ?? s?.total_amount ?? null;
+              if (typeof tCount === 'number') setServerTotalCount(Number(tCount));
+              if (typeof tAmt === 'number') setServerTotalAmount(Number(tAmt));
+            }
+            console.log('📊 Sales loaded (all regions):', salesData.length);
+            setLoadedSales(salesData);
+          } else {
+            // Partial region selection: fetch each region and aggregate
+            let allSales: any[] = [];
+            let aggCount = 0;
+            let aggAmount = 0;
+            for (const r of selectedRegions) {
+              const params = { ...baseParams, region: r };
+              const res = await salesService.getAll(params);
+              if (res && res.success) {
+                const arr = Array.isArray(res.data) ? res.data : (res.data as any).sales || [];
+                allSales = allSales.concat(arr);
+                const r = res as any;
+                const rsrc = r.data ?? r;
+                const rc = rsrc?.total ?? r?.total ?? rsrc?.count ?? r?.count ?? null;
+                const ra = rsrc?.totalAmount ?? r?.totalAmount ?? rsrc?.total_amount ?? r?.total_amount ?? null;
+                aggCount += typeof rc === 'number' ? Number(rc) : arr.length;
+                aggAmount += typeof ra === 'number' ? Number(ra) : arr.reduce((s: number, item: any) => s + (item.saleAmount || 0), 0);
+              }
+            }
+            console.log('📊 Sales loaded (partial regions):', allSales.length);
+            setLoadedSales(allSales);
+            setServerTotalCount(aggCount);
+            setServerTotalAmount(aggAmount);
+          }
+        }
         
         // Fetch commissions
         const commissionsRes = await commissionService.getAll();
@@ -122,56 +194,32 @@ export default function Reports() {
         console.log('👥 Users loaded:', usersData.length);
         setLoadedUsers(usersData);
         
-        // Ensure products and IMEIs are set from context (fallback available)
-        setLoadedProducts(products);
-        setLoadedImeis(imeis);
-        console.log('📦 Products loaded:', products.length, 'IMEIs loaded:', imeis.length);
+        // Products and IMEIs are loaded from API where available
+        console.log('📦 Products and IMEIs loaded from API (if provided)');
         
         console.log('✅ Reports data loaded successfully');
       } catch (error) {
         console.error('❌ Error loading reports data:', error);
         toast.error('Failed to load reports data');
-        // Fall back to context data on error
-        setLoadedSales(sales);
-        setLoadedCommissions(commissions);
-        setLoadedUsers(users);
-        setLoadedProducts(products);
-        setLoadedImeis(imeis);
+        // Do not fallback to context data — keep API data empty to surface the error
       } finally {
         setIsLoading(false);
       }
     };
     
     loadReportsData();
-  }, [currentUser?.id]);
+  }, [currentUser?.id, startDate, endDate, userRegion, selectedRegions, registeredRegions.length]);
   
-  // Merge API-loaded data with realtime context data so updates reflect immediately.
-  const mergeArraysById = (apiArr: any[], ctxArr: any[]) => {
-    const map = new Map<string, any>();
-    (apiArr || []).forEach(item => {
-      const id = item?.id ?? item?._id;
-      if (id) map.set(id.toString(), item);
-    });
-    (ctxArr || []).forEach(item => {
-      const id = item?.id ?? item?._id;
-      if (id) map.set(id.toString(), item);
-    });
-    return Array.from(map.values());
-  };
-
-  const reportSales = mergeArraysById(loadedSales, sales);
-  const reportCommissions = mergeArraysById(loadedCommissions, commissions);
-  const reportUsers = mergeArraysById(loadedUsers, users);
-  const reportProducts = mergeArraysById(loadedProducts, products);
-  const reportImeis = mergeArraysById(loadedImeis, imeis);
+  // Use API-loaded data only (no fallbacks to context)
+  const reportSales = loadedSales;
+  const reportCommissions = loadedCommissions;
+  const reportUsers = loadedUsers;
+  const reportProducts = loadedProducts;
+  const reportImeis = loadedImeis;
   
   // Use registered regions or fallback to all regions from data
   const availableRegions = registeredRegions.length > 0 ? registeredRegions : 
     Array.from(new Set(reportUsers.map((u: any) => u.region).filter(Boolean)));
-  
-  // Selected regions (Admin can select multiple, RM gets their own region only)
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
-  const [regionsInitialized, setRegionsInitialized] = useState(false);
   
   // Initialize selected regions after available regions are loaded
   useEffect(() => {
@@ -223,7 +271,12 @@ export default function Reports() {
     
     const filtered = reportSales.filter((sale: any) => {
       const saleDate = new Date(sale.createdAt);
-      const isInDateRange = saleDate >= startDate && saleDate <= endDate;
+      const startBoundary = startDate ? new Date(new Date(startDate).setHours(0,0,0,0)) : null;
+      const endBoundary = endDate ? new Date(new Date(endDate).setHours(23,59,59,999)) : null;
+      const isInDateRange = (
+        (!startBoundary || saleDate >= startBoundary) &&
+        (!endBoundary || saleDate <= endBoundary)
+      );
       
       // More lenient region filter - check multiple fields
       const isRegionSale = 
@@ -241,8 +294,8 @@ export default function Reports() {
   }, [reportSales, startDate, endDate, selectedRegions, userRegion, reportUsers]);
 
   // Stats
-  const totalRevenue = filteredSales.reduce((sum, s) => sum + s.saleAmount, 0);
-  const totalSalesCount = filteredSales.length;
+  const totalRevenue = serverTotalAmount ?? filteredSales.reduce((sum, s) => sum + (s.saleAmount || 0), 0);
+  const totalSalesCount = serverTotalCount ?? filteredSales.length;
   const filteredCommissions = reportCommissions.filter((c: any) => 
     filteredSales.some(s => s.id === c.saleId)
   );
@@ -549,7 +602,7 @@ export default function Reports() {
                 <div>
                   <p className="text-sm text-accent font-medium">Active FOs</p>
                   <p className="text-2xl font-bold text-foreground">{activeFOs}</p>
-                  <p className="text-xs text-muted-foreground">of {users.length} total</p>
+                  <p className="text-xs text-muted-foreground">of {reportUsers.length} total</p>
                 </div>
                 <Users className="h-8 w-8 text-accent" />
               </div>

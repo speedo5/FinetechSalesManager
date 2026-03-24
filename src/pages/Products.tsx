@@ -45,7 +45,7 @@ export default function Products() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [formData, setFormData] = useState({ name: '', category: 'phone' as ProductCategory, price: '', stockQuantity: '' });
+  const [formData, setFormData] = useState({ name: '', category: 'Smartphones' as ProductCategory, price: '', stockQuantity: '' });
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState(false);
 
@@ -83,7 +83,7 @@ export default function Products() {
 
     setIsDialogOpen(false);
     setEditingProduct(null);
-    setFormData({ name: '', category: 'phone', price: '', stockQuantity: '' });
+    setFormData({ name: '', category: 'Smartphones', price: '', stockQuantity: '' });
   };
 
   const handleEditProduct = (product: Product) => {
@@ -159,7 +159,7 @@ export default function Products() {
                 setIsDialogOpen(open);
                 if (!open) {
                   setEditingProduct(null);
-                  setFormData({ name: '', category: 'phone', price: '', stockQuantity: '' });
+                  setFormData({ name: '', category: 'Smartphones', price: '', stockQuantity: '' });
                 }
               }}>
                 <DialogTrigger asChild>
@@ -193,8 +193,8 @@ export default function Products() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="phone">Phone</SelectItem>
-                          <SelectItem value="accessory">Accessory</SelectItem>
+                          <SelectItem value="Smartphones">Phones</SelectItem>
+                          <SelectItem value="Accessories">Accessories</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -262,7 +262,7 @@ export default function Products() {
             <CardContent className="p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
               <Smartphone className="h-6 w-6 sm:h-8 sm:w-8 text-accent shrink-0" />
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-bold truncate">{products.filter(p => p.category === 'phone').length}</p>
+                <p className="text-lg sm:text-2xl font-bold truncate">{products.filter(p => ['Smartphones','Feature Phones','Tablets'].includes(p.category)).length}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground truncate">Phone Models</p>
               </div>
             </CardContent>
@@ -271,7 +271,7 @@ export default function Products() {
             <CardContent className="p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
               <Headphones className="h-6 w-6 sm:h-8 sm:w-8 text-success shrink-0" />
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-bold truncate">{products.filter(p => p.category === 'accessory').length}</p>
+                <p className="text-lg sm:text-2xl font-bold truncate">{products.filter(p => p.category === 'Accessories').length}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground truncate">Accessories</p>
               </div>
             </CardContent>
@@ -323,9 +323,9 @@ export default function Products() {
                     />
                   )}
                   <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${
-                    product.category === 'phone' ? 'bg-primary/10 text-primary' : 'bg-success/10 text-success'
+                    ['Smartphones','Feature Phones','Tablets'].includes(product.category) ? 'bg-primary/10 text-primary' : 'bg-success/10 text-success'
                   }`}>
-                    {product.category === 'phone' ? <Smartphone className="h-5 w-5" /> : <Headphones className="h-5 w-5" />}
+                    {['Smartphones','Feature Phones','Tablets'].includes(product.category) ? <Smartphone className="h-5 w-5" /> : <Headphones className="h-5 w-5" />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate">{product.name}</p>
@@ -395,9 +395,9 @@ export default function Products() {
                     <td>
                       <div className="flex items-center gap-3">
                         <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${
-                          product.category === 'phone' ? 'bg-primary/10 text-primary' : 'bg-success/10 text-success'
+                          ['Smartphones','Feature Phones','Tablets'].includes(product.category) ? 'bg-primary/10 text-primary' : 'bg-success/10 text-success'
                         }`}>
-                          {product.category === 'phone' ? <Smartphone className="h-4 w-4" /> : <Headphones className="h-4 w-4" />}
+                          {['Smartphones','Feature Phones','Tablets'].includes(product.category) ? <Smartphone className="h-4 w-4" /> : <Headphones className="h-4 w-4" />}
                         </div>
                         <span className="font-medium">{product.name}</span>
                       </div>

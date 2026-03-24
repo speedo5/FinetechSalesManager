@@ -20,7 +20,7 @@ interface DeleteUserDialogProps {
 }
 
 export function DeleteUserDialog({ open, onOpenChange, user }: DeleteUserDialogProps) {
-  const { setUsers, currentUser } = useApp();
+  const { setUsers, currentUser, logActivity } = useApp();
 
   const handleDelete = async () => {
     if (!user) return;
@@ -49,6 +49,11 @@ export function DeleteUserDialog({ open, onOpenChange, user }: DeleteUserDialogP
       }));
       
       toast.success(`${user.name} has been deactivated`);
+      try {
+        logActivity('user', 'Deactivate User', `Deactivated user ${user.name}`, { userId, userName: user.name });
+      } catch (e) {
+        console.warn('Failed to log user deactivation activity:', e);
+      }
       onOpenChange(false);
     } catch (error: any) {
       toast.error(error?.message || 'Failed to deactivate user');

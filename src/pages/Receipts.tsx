@@ -20,6 +20,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { generateSaleReceipt, exportToCSV } from '@/lib/pdfGenerator';
+import { exportToExcel } from '@/lib/excelExport';
 import { Receipt, Search, Download, FileText, User, Calendar, Filter, Building2, Eye, X } from 'lucide-react';
 import { PhoneSource } from '@/types';
 import { salesService } from '@/services/salesService';
@@ -34,6 +35,8 @@ export default function Receipts() {
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [previewSale, setPreviewSale] = useState<any | null>(null);
+  const [serverTotalCount, setServerTotalCount] = useState<number | null>(null);
+  const [serverTotalAmount, setServerTotalAmount] = useState<number | null>(null);
 
   // Get manager's region - Regional Managers and Team Leaders only see their region's receipts
   const managerRegion = (currentUser?.role === 'regional_manager' || currentUser?.role === 'team_leader') ? currentUser?.region : null;
@@ -53,8 +56,19 @@ export default function Receipts() {
     const fetchSales = async () => {
       try {
         setIsLoading(true);
-        const response = await salesService.getAll();
-        if (response.success && response.data) {
+        const dateRange = getDateRange();
+        const params: any = {};
+        if (sellerFilter && sellerFilter !== 'all') params.soldBy = sellerFilter;
+        if (dateRange) {
+          params.startDate = dateRange.start.toISOString();
+          params.endDate = dateRange.end.toISOString();
+        }
+
+        // request a large limit so the UI can display all matching receipts
+        params.limit = 100000;
+
+        const response = await salesService.getAll(params);
+        if (response && response.success) {
           let salesList = Array.isArray(response.data) ? response.data : [];
           
           // enrich sales with seller info (name/role/region) from users context when missing
@@ -70,12 +84,20 @@ export default function Receipts() {
             };
           });
           
-          // Filter sales by region if user is Regional Manager
+          // Filter sales by region if user is Regional Manager (extra safety)
           if (managerRegion) {
             salesList = salesList.filter((sale: any) => sale.region === managerRegion);
           }
-          
+
           setSales(salesList);
+
+          // Robustly extract totals from possible response shapes
+          const respAny = response as any;
+          const totalsSource = respAny.data ?? respAny;
+          const totalCount = typeof totalsSource?.total === 'number' ? totalsSource.total : (typeof respAny.total === 'number' ? respAny.total : null);
+          const totalAmt = typeof totalsSource?.totalAmount === 'number' ? totalsSource.totalAmount : (typeof respAny.totalAmount === 'number' ? respAny.totalAmount : null);
+          if (totalCount !== null) setServerTotalCount(totalCount);
+          if (totalAmt !== null) setServerTotalAmount(totalAmt);
         }
       } catch (error) {
         console.error('Failed to fetch sales:', error);
@@ -86,7 +108,7 @@ export default function Receipts() {
     };
 
     fetchSales();
-  }, [managerRegion, users]);
+  }, [managerRegion, users, sellerFilter, dateFilter]);
 
   const getSourceBadgeClass = (source: PhoneSource | undefined) => {
     switch (source) {
@@ -137,6 +159,16 @@ export default function Receipts() {
     return name;
   };
 
+  const normalizeReceipt = (raw?: string) => {
+    if (!raw) return `RCP-${String(3000).padStart(6, '0')}`;
+    const s = String(raw);
+    const match = s.match(/(\d+)/);
+    if (!match) return s;
+    let num = parseInt(match[1], 10);
+    if (num < 3000) num = num + 1000;
+    return `RCP-${String(num).padStart(6, '0')}`;
+  };
+
   const filteredSales = sales.filter(sale => {
     const matchesSearch = 
       sale.etrReceiptNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -156,24 +188,27 @@ export default function Receipts() {
   });
 
   const handleExport = () => {
-    // Enrich sales with computed seller labels for export
+    // Enrich sales with computed seller labels & normalized receipt numbers for export
     const salesWithLabels = filteredSales.map(sale => ({
       ...sale,
       sellerLabel: getSellerLabel(sale),
+      normalizedReceipt: normalizeReceipt(sale.etrReceiptNo || sale.receiptNumber),
     }));
 
     const columns = [
-      { key: 'etrReceiptNo' as const, header: 'Receipt No' },
+      { key: 'normalizedReceipt' as const, header: 'Receipt No' },
       { key: 'createdAt' as const, header: 'Date' },
+      { key: 'clientName' as const, header: 'Client' },
+      { key: 'clientPhone' as const, header: 'Client Phone' },
+      { key: 'clientIdNumber' as const, header: 'Client ID' },
       { key: 'productName' as const, header: 'Product' },
+      { key: 'source' as const, header: 'Source' },
       { key: 'imei' as const, header: 'IMEI' },
-      { key: 'saleAmount' as const, header: 'Amount' },
-      { key: 'paymentMethod' as const, header: 'Payment' },
-      { key: 'paymentReference' as const, header: 'Reference' },
       { key: 'sellerLabel' as const, header: 'Seller' },
-      { key: 'foCode' as const, header: 'FO Code' },
+      { key: 'paymentMethod' as const, header: 'Payment' },
+      { key: 'saleAmount' as const, header: 'Amount' },
     ];
-    exportToCSV(salesWithLabels, 'receipts', columns);
+    exportToExcel(salesWithLabels, 'receipts', columns);
   };
 
   const handleDownloadReceipt = async (sale: typeof sales[0]) => {
@@ -213,7 +248,7 @@ export default function Receipts() {
           </div>
           <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
             <Download className="h-4 w-4 mr-2" />
-            Export All
+            Export to Excel
           </Button>
         </div>
 
@@ -224,7 +259,7 @@ export default function Receipts() {
               <div className="flex items-center gap-2 sm:gap-3">
                 <Receipt className="h-6 w-6 sm:h-8 sm:w-8 text-primary shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-lg sm:text-2xl font-bold truncate">{filteredSales.length}</p>
+                  <p className="text-lg sm:text-2xl font-bold truncate">{serverTotalCount ?? filteredSales.length}</p>
                   <p className="text-xs sm:text-sm text-muted-foreground truncate">Total Receipts {managerRegion ? `(${managerRegion})` : ''}</p>
                 </div>
               </div>
@@ -233,7 +268,7 @@ export default function Receipts() {
           <Card className="border shadow-sm">
             <CardContent className="p-3 sm:p-4">
               <div className="min-w-0">
-                <p className="text-lg sm:text-2xl font-bold truncate">Ksh {totalAmount.toLocaleString()}</p>
+                <p className="text-lg sm:text-2xl font-bold truncate">Ksh {(serverTotalAmount ?? totalAmount).toLocaleString()}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground truncate">Total Sales {managerRegion ? `(${managerRegion})` : ''}</p>
               </div>
             </CardContent>
@@ -315,7 +350,7 @@ export default function Receipts() {
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <p className="font-mono text-sm font-medium text-primary">{sale.etrReceiptNo}</p>
+                      <p className="font-mono text-sm font-medium text-primary">{normalizeReceipt(sale.etrReceiptNo || sale.receiptNumber)}</p>
                       <p className="text-xs text-muted-foreground mb-2">
                         {new Date(sale.createdAt).toLocaleDateString()}
                       </p>
@@ -330,7 +365,7 @@ export default function Receipts() {
                     </Badge>
                   </div>
                   <div className="flex items-center gap-2 mb-1">
-                    <p className="font-medium">{sale.productName}</p>
+                    <p className="font-medium">{sale.productName}{sale.capacity ? ` - ${sale.capacity}` : ''}</p>
                   </div>
                   {sale.imei && (
                     <p className="text-xs font-mono text-muted-foreground mb-1">
@@ -398,7 +433,7 @@ export default function Receipts() {
                 <tbody>
                   {filteredSales.map((sale) => (
                     <tr key={sale.id}>
-                      <td className="font-mono text-sm text-primary">{sale.etrReceiptNo}</td>
+                      <td className="font-mono text-sm text-primary">{normalizeReceipt(sale.etrReceiptNo || sale.receiptNumber)}</td>
                       <td className="text-sm">{new Date(sale.createdAt).toLocaleDateString()}</td>
                       <td>
                         {sale.clientName ? (
@@ -465,9 +500,9 @@ export default function Receipts() {
               {/* Header */}
               <div className="text-center border-b pb-4">
                 <h3 className="font-bold text-lg">RECEIPT</h3>
-                <p className="text-xs text-muted-foreground">Receipt #{previewSale.receiptNumber}</p>
+                <p className="text-xs text-muted-foreground">Receipt #{normalizeReceipt(previewSale.etrReceiptNo || previewSale.receiptNumber)}</p>
                 <p className="text-xs text-muted-foreground">
-                  {new Date(previewSale.date).toLocaleDateString()} {new Date(previewSale.date).toLocaleTimeString()}
+                  {new Date(previewSale.createdAt || previewSale.date || previewSale.createdAt).toLocaleDateString()} {new Date(previewSale.createdAt || previewSale.date || previewSale.createdAt).toLocaleTimeString()}
                 </p>
               </div>
 

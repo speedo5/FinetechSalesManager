@@ -36,9 +36,17 @@ import {
   Building2,
   Download
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import commissionService from '@/services/commissionService';
 
 export default function POS() {
-  const { currentUser, addNotification, logActivity } = useApp();
+  const { currentUser, addNotification, logActivity, setCommissions } = useApp();
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   
@@ -46,6 +54,9 @@ export default function POS() {
   const [loadedProducts, setLoadedProducts] = useState<any[]>([]);
   const [loadedImeis, setLoadedImeis] = useState<any[]>([]);
   const [fieldOfficers, setFieldOfficers] = useState<any[]>([]);
+  const [regionalManagers, setRegionalManagers] = useState<any[]>([]);
+  const [teamLeaders, setTeamLeaders] = useState<any[]>([]);
+  const [allFieldOfficers, setAllFieldOfficers] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   
@@ -64,6 +75,37 @@ export default function POS() {
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [clientIdNumber, setClientIdNumber] = useState('');
+  
+  // Express Checkout Modal State
+  const [isExpressModalOpen, setIsExpressModalOpen] = useState(false);
+  const [expressImei, setExpressImei] = useState('');
+  const [expressProduct, setExpressProduct] = useState('');
+  const [expressSource, setExpressSource] = useState<PhoneSource>('watu');
+  const [expressSellingPrice, setExpressSellingPrice] = useState('');
+  const [expressRm, setExpressRm] = useState('');
+  const [expressTl, setExpressTl] = useState('');
+  const [expressFo, setExpressFo] = useState('');
+  const [expressRmCommission, setExpressRmCommission] = useState(0);
+  const [expressTlCommission, setExpressTlCommission] = useState(0);
+  const [expressFoCommission, setExpressFoCommission] = useState(0);
+  const [expressRandomSeller, setExpressRandomSeller] = useState('');
+  
+  // Search states for dropdowns
+  const [rmSearch, setRmSearch] = useState('');
+  const [tlSearch, setTlSearch] = useState('');
+  const [foSearch, setFoSearch] = useState('');
+  
+  // Filtered user lists for dropdowns
+  const filteredRMs = regionalManagers.filter(rm => 
+    rm.name.toLowerCase().includes(rmSearch.toLowerCase())
+  );
+  const filteredTLs = teamLeaders.filter(tl => 
+    tl.name.toLowerCase().includes(tlSearch.toLowerCase())
+  );
+  const filteredFOs = allFieldOfficers.filter(fo => 
+    fo.name.toLowerCase().includes(foSearch.toLowerCase()) || 
+    fo.foCode?.toLowerCase().includes(foSearch.toLowerCase())
+  );
   
   // Check if current user can print receipts (Admin, Regional Manager, or Team Leader)
   const canPrintReceipt = currentUser?.role === 'admin' || currentUser?.role === 'regional_manager' || currentUser?.role === 'team_leader';
@@ -90,19 +132,35 @@ export default function POS() {
     return Array.from(map.values());
   };
 
+  // Normalize IMEI objects so frontend uses `sellingPrice` consistently
+  const normalizeImeis = (imeis: any[]) => {
+    return imeis.map(i => ({
+      ...i,
+      sellingPrice: i.sellingPrice ?? i.price ?? 0,
+      id: i.id || i._id,
+      productId: (typeof i.productId === 'string' ? i.productId : (i.productId?._id || i.productId?.id)),
+    }));
+  };
+
   useEffect(() => {
     const loadData = async () => {
       try {
         setIsLoading(true);
 
         // Load products and field officers in parallel
-        const [productsRes, foRes] = await Promise.all([
+        const [productsRes, foRes, rmRes, tlRes, allFoRes] = await Promise.all([
           productService.getAll(),
+          userService.getAll({ role: 'field_officer' }),
+          userService.getAll({ role: 'regional_manager' }),
+          userService.getAll({ role: 'team_leader' }),
           userService.getAll({ role: 'field_officer' }),
         ]);
 
         const products = Array.isArray(productsRes) ? productsRes : (productsRes as any)?.data || [];
         const fos = Array.isArray(foRes) ? foRes : (foRes as any)?.data || [];
+        const rms = Array.isArray(rmRes) ? rmRes : (rmRes as any)?.data || [];
+        const tls = Array.isArray(tlRes) ? tlRes : (tlRes as any)?.data || [];
+        const allFos = Array.isArray(allFoRes) ? allFoRes : (allFoRes as any)?.data || [];
 
         // Always load IN_STOCK items
         const inStockRes = await imeiService.getAll({ status: 'IN_STOCK' });
@@ -132,8 +190,11 @@ export default function POS() {
         console.log('Loaded IMEIs - inStock:', inStockImeis.length, 'allocated:', allocatedImeis.length, 'merged:', allImeis.length);
 
         setLoadedProducts(products);
-        setLoadedImeis(allImeis);
+        setLoadedImeis(normalizeImeis(allImeis));
         setFieldOfficers(fos);
+        setRegionalManagers(rms);
+        setTeamLeaders(tls);
+        setAllFieldOfficers(allFos);
       } catch (error) {
         console.error('Error loading data:', error);
         const errorMsg = error instanceof ApiClientError ? error.getDisplayMessage() : 'Failed to load products and IMEIs';
@@ -155,8 +216,8 @@ export default function POS() {
         const allocatedRes = await imeiService.getAll({ status: 'ALLOCATED', currentHolderId: selectedFO });
         const allocatedImeis = parseImeisResponse(allocatedRes);
 
-        // Merge with existing loadedImeis and dedupe
-        setLoadedImeis(prev => mergeImeis([prev, allocatedImeis]));
+        // Merge with existing loadedImeis and dedupe, then normalize
+        setLoadedImeis(prev => normalizeImeis(mergeImeis([prev, allocatedImeis])));
       } catch (error) {
         console.error('Error loading allocated IMEIs for selected FO:', error);
       } finally {
@@ -379,7 +440,7 @@ export default function POS() {
             }
           }
           
-          setLoadedImeis(updatedImeis);
+          setLoadedImeis(normalizeImeis(updatedImeis));
         } catch (refreshError) {
           console.error('Error refreshing IMEIs:', refreshError);
           // Don't fail the entire sale if refresh fails
@@ -477,6 +538,214 @@ export default function POS() {
     }
   };
 
+  const completeExpressSale = async () => {
+    if (!expressProduct || !expressImei) {
+      sonnerToast.error('Please fill all required fields');
+      return;
+    }
+
+    // Validate IMEI format
+    if (expressImei.length !== 15 || !/^\d+$/.test(expressImei)) {
+      sonnerToast.error('IMEI must be exactly 15 digits');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+
+      const selectedProduct = loadedProducts.find(p => p.id === expressProduct);
+      if (!selectedProduct) {
+        sonnerToast.error('Selected product not found');
+        return;
+      }
+
+      let imeiData;
+
+      // Try to find existing IMEI
+      try {
+        const imeiResponse = await imeiService.search(expressImei);
+        if (imeiResponse.success && imeiResponse.data) {
+          imeiData = imeiResponse.data;
+          if (imeiData.status === 'SOLD') {
+            sonnerToast.error('This IMEI has already been sold');
+            return;
+          }
+        }
+      } catch (searchError) {
+        // IMEI not found, will register it below
+        console.log('IMEI not found, will register:', expressImei);
+      }
+
+      // If IMEI doesn't exist, register it automatically
+      if (!imeiData) {
+        // Register the IMEI (capacity is not required for receipt generation)
+        const registerResponse = await imeiService.register({
+          imei: expressImei,
+          productId: expressProduct,
+          price: expressSellingPrice ? parseFloat(expressSellingPrice) : selectedProduct.price,
+          source: expressSource,
+        });
+
+        if (!registerResponse.success || !registerResponse.data) {
+          sonnerToast.error('Failed to register IMEI');
+          return;
+        }
+
+        imeiData = registerResponse.data;
+        // Normalize returned IMEI so frontend uses `sellingPrice`
+        imeiData.sellingPrice = imeiData.sellingPrice ?? imeiData.price ?? (expressSellingPrice ? parseFloat(expressSellingPrice) : undefined);
+        imeiData.id = imeiData.id || imeiData._id;
+        sonnerToast.success(`IMEI ${expressImei} registered successfully`);
+      }
+
+      // If IMEI was found via search, normalize its price field as well
+      if (imeiData) {
+        imeiData.sellingPrice = imeiData.sellingPrice ?? imeiData.price ?? (expressSellingPrice ? parseFloat(expressSellingPrice) : undefined);
+        imeiData.id = imeiData.id || imeiData._id;
+      }
+
+      // Get selected users
+      const selectedRm = regionalManagers.find(rm => rm.id === expressRm);
+      const selectedTl = teamLeaders.find(tl => tl.id === expressTl);
+      const selectedFo = allFieldOfficers.find(fo => fo.id === expressFo);
+
+      // Determine the primary seller (FO > TL > RM)
+      let primarySellerId = null;
+      let primarySellerRegion = null;
+      let primarySeller = null;
+
+      if (selectedFo) {
+        primarySellerId = selectedFo.id;
+        primarySellerRegion = selectedFo.region;
+        primarySeller = selectedFo;
+      } else if (selectedTl) {
+        primarySellerId = selectedTl.id;
+        primarySellerRegion = selectedTl.region;
+        primarySeller = selectedTl;
+      } else if (selectedRm) {
+        primarySellerId = selectedRm.id;
+        primarySellerRegion = selectedRm.region;
+        primarySeller = selectedRm;
+      }
+
+      // Prepare sale data for API
+      const saleData: any = {
+        imeiId: imeiData.id || imeiData._id,
+        paymentMethod: 'cash',
+        customerName: clientName || 'Walk-in Customer',
+        customerPhone: clientPhone || '',
+        customerIdNumber: clientIdNumber || '',
+        saleAmount: expressSellingPrice ? parseFloat(expressSellingPrice) : (imeiData?.sellingPrice ?? selectedProduct.price),
+        source: expressSource,
+        saleType: 'EXPRESS',
+        assignedRmId: expressRm || undefined,
+        assignedTlId: expressTl || undefined,
+        assignedFoId: expressFo || undefined,
+        rmCommission: expressRmCommission,
+        tlCommission: expressTlCommission,
+        foCommission: expressFoCommission,
+        soldByAdmin: true,
+        soldBy: primarySellerId, // Attribute sale to selected user
+        region: primarySellerRegion, // Use selected user's region
+      };
+
+      console.log('Express sale data being sent:', saleData);
+
+      // Create sale via API
+      const createdSaleRes = await salesService.create(saleData);
+      
+      if (!createdSaleRes?.data) {
+        throw new Error('Failed to create express sale');
+      }
+
+      const createdSale = createdSaleRes.data;
+
+      // Refresh commissions to include newly created ones
+      try {
+        const commissionsResponse = await commissionService.getAll();
+        if (commissionsResponse.success && commissionsResponse.data) {
+          let commissionsList: Commission[] = [];
+          
+          if (Array.isArray(commissionsResponse.data)) {
+            commissionsList = commissionsResponse.data;
+          } else if ((commissionsResponse.data as any).data && Array.isArray((commissionsResponse.data as any).data)) {
+            commissionsList = (commissionsResponse.data as any).data;
+          } else if ((commissionsResponse.data as any).commissions && Array.isArray((commissionsResponse.data as any).commissions)) {
+            commissionsList = (commissionsResponse.data as any).commissions;
+          }
+          
+          setCommissions(commissionsList);
+          console.log(`Refreshed commissions list, now has ${commissionsList.length} commissions`);
+        }
+      } catch (commissionRefreshError) {
+        console.error('Error refreshing commissions:', commissionRefreshError);
+        // Don't fail the sale if commission refresh fails
+      }
+
+      // Generate and download receipt
+      try {
+        // Determine seller name for receipt
+        let sellerName = 'Admin';
+        if (expressRandomSeller.trim()) {
+          sellerName = expressRandomSeller.trim();
+        } else {
+          // Use assigned FO/TL/RM with their region
+          if (selectedFo) {
+            sellerName = `${selectedFo.name} [${selectedFo.foCode}/${selectedFo.region || 'N/A'}]`;
+          } else if (selectedTl) {
+            sellerName = `${selectedTl.name} [TL/${selectedTl.region || 'N/A'}]`;
+          } else if (selectedRm) {
+            sellerName = `${selectedRm.name} [RM/${selectedRm.region || 'N/A'}]`;
+          }
+        }
+
+        const saleForReceipt = {
+          ...createdSale,
+          sellerName: sellerName,
+          sellerRole: 'admin',
+          clientName: saleData.customerName,
+          clientPhone: saleData.customerPhone,
+          clientIdNumber: saleData.customerIdNumber,
+          productName: selectedProduct.name, // Ensure product appears on the receipt
+          saleAmount: expressSellingPrice ? parseFloat(expressSellingPrice) : (selectedProduct.price || createdSale.saleAmount),
+        };
+        generateSaleReceipt(saleForReceipt);
+        sonnerToast.success('Express sale completed and receipt downloaded');
+      } catch (pdfError) {
+        console.error('Error generating PDF receipt:', pdfError);
+        sonnerToast.error('Sale completed but could not generate receipt PDF');
+      }
+
+      // Log activity
+      logActivity('sale', 'Express Sale Completed', 
+        `Admin completed express sale of ${imeiData.productName} (IMEI: ${expressImei.slice(-6)})`,
+        { saleId: createdSale.id, amount: imeiData.sellingPrice }
+      );
+
+      // Reset modal and form
+      setIsExpressModalOpen(false);
+      setExpressImei('');
+      setExpressProduct('');
+      setExpressSource('watu');
+      setExpressRm('');
+      setExpressTl('');
+      setExpressFo('');
+      setExpressRmCommission(0);
+      setExpressTlCommission(0);
+      setExpressFoCommission(0);
+      setExpressRandomSeller('');
+      setClientName('');
+      setClientPhone('');
+      setClientIdNumber('');
+
+    } catch (error) {
+      console.error('Error completing express sale:', error);
+      sonnerToast.error('Failed to complete express sale');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <MainLayout>
       <div className="animate-fade-in">
@@ -490,58 +759,337 @@ export default function POS() {
                 : 'Process sales and generate receipts'}
             </p>
           </div>
-          {currentUser?.role === 'team_leader' && (
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => {
-                setIsLoading(true);
-                // Reload inventory
-                const loadData = async () => {
-                  try {
-                    const [productsRes, imeisRes, foRes] = await Promise.all([
-                      productService.getAll(),
-                      imeiService.getAll({}),
-                      userService.getAll({ role: 'field_officer' }),
-                    ]);
-                    
-                    const products = Array.isArray(productsRes) ? productsRes : (productsRes as any)?.data || [];
-                    let imeis: any[] = [];
-                    
-                    if (imeisRes) {
-                      if ((imeisRes as any).data) {
-                        const dataField = (imeisRes as any).data;
-                        if (Array.isArray(dataField)) {
-                          imeis = dataField;
-                        } else if (dataField.imeis && Array.isArray(dataField.imeis)) {
-                          imeis = dataField.imeis;
+          <div className="flex gap-2">
+            {currentUser?.role === 'admin' && (
+              <Dialog open={isExpressModalOpen} onOpenChange={setIsExpressModalOpen}>
+                    <DialogTrigger asChild>
+                      <Button 
+                        className="btn-success"
+                        size="sm"
+                        disabled={isSaving}
+                      >
+                        <Receipt className="h-4 w-4 mr-2" />
+                        Direct Sales
+                      </Button>
+                    </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Receipt className="h-5 w-5" />
+                      Express Checkout (Admin POS Quick Sale)
+                    </DialogTitle>
+                  </DialogHeader>
+                  
+                  <div className="space-y-6">
+                    {/* Product Information */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold">Product Information</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium">IMEI Number *</Label>
+                          <Input
+                            placeholder="Enter 15-digit IMEI number"
+                            value={expressImei}
+                            onChange={(e) => {
+                              const value = e.target.value.replace(/\D/g, ''); // Only allow digits
+                              if (value.length <= 15) {
+                                setExpressImei(value);
+                              }
+                            }}
+                            maxLength={15}
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label className="text-sm font-medium">Select Product *</Label>
+                          <Select value={expressProduct} onValueChange={(val) => {
+                            setExpressProduct(val);
+                            const sel = loadedProducts.find(p => p.id === val || p._id === val);
+                            const defaultPrice = sel?.sellingPrice ?? sel?.price ?? '';
+                            setExpressSellingPrice(defaultPrice != null ? String(defaultPrice) : '');
+                          }}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Choose product" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {loadedProducts.filter(p => p.category === 'Smartphones' || p.category === 'Feature Phones' || p.category === 'Tablets').map((prod) => (
+                                <SelectItem key={prod.id} value={prod.id}>
+                                  {prod.name} - Ksh {prod.price?.toLocaleString?.() ?? prod.price}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label className="text-sm font-medium">Selling Price (Ksh)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            placeholder="Enter selling price"
+                            value={expressSellingPrice}
+                            onChange={(e) => setExpressSellingPrice(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Client Details */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold">Client Details</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium">Client Name</Label>
+                          <Input
+                            placeholder="e.g. Susan Andego"
+                            value={clientName}
+                            onChange={(e) => setClientName(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">Client Phone</Label>
+                          <Input
+                            placeholder="e.g. 0712345678"
+                            value={clientPhone}
+                            onChange={(e) => setClientPhone(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">Client ID Number</Label>
+                          <Input
+                            placeholder="e.g. 12345678"
+                            value={clientIdNumber}
+                            onChange={(e) => setClientIdNumber(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Random Seller */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold">Random Seller (Optional)</h3>
+                      
+                      <div>
+                        <Label className="text-sm font-medium">Seller Name/Location</Label>
+                        <Input
+                          placeholder="e.g. John Ouma [FO-001/Tala]"
+                          value={expressRandomSeller}
+                          onChange={(e) => setExpressRandomSeller(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Enter name and location of seller not registered in the system
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Commission Assignment */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold">Commission Assignment</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium">Regional Manager</Label>
+                          <Input
+                            placeholder="Search RMs..."
+                            value={rmSearch}
+                            onChange={(e) => setRmSearch(e.target.value)}
+                            className="mb-2"
+                          />
+                          <Select value={expressRm} onValueChange={(e) => {
+                            setExpressRm(e);
+                            // Auto-set commission from product
+                            const prod = loadedProducts.find(p => p.id === expressProduct);
+                            if (prod?.commissionConfig?.regionalManagerCommission) {
+                              setExpressRmCommission(prod.commissionConfig.regionalManagerCommission);
+                            }
+                          }}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select RM" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {filteredRMs.map((rm) => (
+                                <SelectItem key={rm.id} value={rm.id}>
+                                  {rm.name} - {rm.region}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">Team Leader</Label>
+                          <Input
+                            placeholder="Search TLs..."
+                            value={tlSearch}
+                            onChange={(e) => setTlSearch(e.target.value)}
+                            className="mb-2"
+                          />
+                          <Select value={expressTl} onValueChange={(e) => {
+                            setExpressTl(e);
+                            // Auto-set commission from product
+                            const prod = loadedProducts.find(p => p.id === expressProduct);
+                            if (prod?.commissionConfig?.teamLeaderCommission) {
+                              setExpressTlCommission(prod.commissionConfig.teamLeaderCommission);
+                            }
+                          }}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select TL" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {filteredTLs.map((tl) => (
+                                <SelectItem key={tl.id} value={tl.id}>
+                                  {tl.name} - {tl.region}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">Field Officer</Label>
+                          <Input
+                            placeholder="Search FOs..."
+                            value={foSearch}
+                            onChange={(e) => setFoSearch(e.target.value)}
+                            className="mb-2"
+                          />
+                          <Select value={expressFo} onValueChange={(e) => {
+                            setExpressFo(e);
+                            // Auto-set commission from product
+                            const prod = loadedProducts.find(p => p.id === expressProduct);
+                            if (prod?.commissionConfig?.foCommission) {
+                              setExpressFoCommission(prod.commissionConfig.foCommission);
+                            }
+                          }}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select FO" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {filteredFOs.map((fo) => (
+                                <SelectItem key={fo.id} value={fo.id}>
+                                  {fo.name} [{fo.foCode}] - {fo.region}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {/* Commission Amounts */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium">RM Commission</Label>
+                          <Input
+                            type="number"
+                            value={expressRmCommission}
+                            onChange={(e) => setExpressRmCommission(Number(e.target.value))}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">TL Commission</Label>
+                          <Input
+                            type="number"
+                            value={expressTlCommission}
+                            onChange={(e) => setExpressTlCommission(Number(e.target.value))}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">FO Commission</Label>
+                          <Input
+                            type="number"
+                            value={expressFoCommission}
+                            onChange={(e) => setExpressFoCommission(Number(e.target.value))}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sales Summary */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold">Sales Summary</h3>
+                      
+                      <div className="bg-muted/50 p-4 rounded-lg space-y-2">
+                        <div className="flex justify-between">
+                          <span>Product Price:</span>
+                          <span>Ksh {loadedProducts.find(p => p.id === expressProduct)?.price?.toLocaleString() || '0'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Total Commission:</span>
+                          <span>Ksh {(expressRmCommission + expressTlCommission + expressFoCommission).toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between font-bold border-t pt-2">
+                          <span>Net Sale Amount:</span>
+                          <span>Ksh {((loadedProducts.find(p => p.id === expressProduct)?.price || 0) - (expressRmCommission + expressTlCommission + expressFoCommission)).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Button */}
+                    <Button 
+                      className="w-full h-12 text-base" 
+                      disabled={!expressProduct || !expressImei || isSaving}
+                      onClick={completeExpressSale}
+                    >
+                      {isSaving ? 'Processing...' : 'Complete Sale'}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
+            {currentUser?.role === 'team_leader' && (
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => {
+                  setIsLoading(true);
+                  // Reload inventory
+                  const loadData = async () => {
+                    try {
+                      const [productsRes, imeisRes, foRes] = await Promise.all([
+                        productService.getAll(),
+                        imeiService.getAll({}),
+                        userService.getAll({ role: 'field_officer' }),
+                      ]);
+                      
+                      const products = Array.isArray(productsRes) ? productsRes : (productsRes as any)?.data || [];
+                      let imeis: any[] = [];
+                      
+                      if (imeisRes) {
+                        if ((imeisRes as any).data) {
+                          const dataField = (imeisRes as any).data;
+                          if (Array.isArray(dataField)) {
+                            imeis = dataField;
+                          } else if (dataField.imeis && Array.isArray(dataField.imeis)) {
+                            imeis = dataField.imeis;
+                          }
+                        } else if ((imeisRes as any).imeis && Array.isArray((imeisRes as any).imeis)) {
+                          imeis = (imeisRes as any).imeis;
+                        } else if (Array.isArray(imeisRes)) {
+                          imeis = imeisRes as any;
                         }
-                      } else if ((imeisRes as any).imeis && Array.isArray((imeisRes as any).imeis)) {
-                        imeis = (imeisRes as any).imeis;
-                      } else if (Array.isArray(imeisRes)) {
-                        imeis = imeisRes as any;
                       }
+                      
+                      const fos = Array.isArray(foRes) ? foRes : (foRes as any)?.data || [];
+                      
+                      setLoadedProducts(products);
+                      setLoadedImeis(imeis);
+                      setFieldOfficers(fos);
+                      sonnerToast.success('Inventory refreshed');
+                    } catch (error) {
+                      sonnerToast.error('Failed to refresh inventory');
+                    } finally {
+                      setIsLoading(false);
                     }
-                    
-                    const fos = Array.isArray(foRes) ? foRes : (foRes as any)?.data || [];
-                    
-                    setLoadedProducts(products);
-                    setLoadedImeis(imeis);
-                    setFieldOfficers(fos);
-                    sonnerToast.success('Inventory refreshed');
-                  } catch (error) {
-                    sonnerToast.error('Failed to refresh inventory');
-                  } finally {
-                    setIsLoading(false);
-                  }
-                };
-                loadData();
-              }}
-              disabled={isLoading}
-            >
-              {isLoading ? 'Loading...' : 'Refresh Allocated Stock'}
-            </Button>
-          )}
+                  };
+                  loadData();
+                }}
+                disabled={isLoading}
+              >
+                {isLoading ? 'Loading...' : 'Refresh Allocated Stock'}
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">

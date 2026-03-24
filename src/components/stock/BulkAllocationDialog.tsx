@@ -65,10 +65,11 @@ export function BulkAllocationDialog({
   };
 
   const toggleAll = () => {
+    const getId = (i: IMEI) => (i as any).id || (i as any)._id;
     if (selectedImeis.size === filteredStock.length) {
       setSelectedImeis(new Set());
     } else {
-      setSelectedImeis(new Set(filteredStock.map(i => i.id)));
+      setSelectedImeis(new Set(filteredStock.map(i => getId(i))));
     }
   };
 
@@ -91,7 +92,7 @@ export function BulkAllocationDialog({
       return;
     }
 
-    const selectedStock = stock.filter(i => selectedImeis.has(i.id));
+    const selectedStock = stock.filter(i => selectedImeis.has((i as any).id || (i as any)._id));
     try {
       await onAllocate(selectedStock, selectedRecipient);
       // Parent handles success toast and closing the dialog
@@ -198,26 +199,30 @@ export function BulkAllocationDialog({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredStock.map((imei) => (
-                    <tr 
-                      key={imei.id} 
-                      className={`cursor-pointer hover:bg-muted/50 ${selectedImeis.has(imei.id) ? 'bg-primary/5' : ''}`}
-                      onClick={() => toggleImei(imei.id)}
-                    >
-                      <td className="p-2">
-                        <Checkbox
-                          checked={selectedImeis.has(imei.id)}
-                          onCheckedChange={() => toggleImei(imei.id)}
-                        />
-                      </td>
-                      <td className="p-2 font-medium">{imei.productName}</td>
-                      <td className="p-2 font-mono text-xs">{imei.imei}</td>
-                      <td className="p-2">Ksh {imei.sellingPrice.toLocaleString()}</td>
-                      <td className="p-2">
-                        <Badge variant="outline">{imei.source}</Badge>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredStock.map((imei) => {
+                    const getId = (i: IMEI) => (i as any).id || (i as any)._id;
+                    const ident = getId(imei) as string;
+                    return (
+                      <tr
+                        key={ident}
+                        className={`cursor-pointer hover:bg-muted/50 ${selectedImeis.has(ident) ? 'bg-primary/5' : ''}`}
+                        onClick={() => toggleImei(ident)}
+                      >
+                        <td className="p-2">
+                          <Checkbox
+                            checked={selectedImeis.has(ident)}
+                            onCheckedChange={() => toggleImei(ident)}
+                          />
+                        </td>
+                        <td className="p-2 font-medium">{imei.productName}</td>
+                        <td className="p-2 font-mono text-xs">{imei.imei}</td>
+                        <td className="p-2">Ksh {imei.sellingPrice.toLocaleString()}</td>
+                        <td className="p-2">
+                          <Badge variant="outline">{imei.source}</Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
